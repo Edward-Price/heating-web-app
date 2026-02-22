@@ -79,10 +79,8 @@ export default function App() {
   const [selectedZoneId, setSelectedZoneId] = useState(null);
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [isDialDragging, setIsDialDragging] = useState(false);
   const isLoadingRef = useRef(false);
   const dialRef = useRef(null);
-  const isTouchDialDraggingRef = useRef(false);
 
   const clearClientSession = useCallback((message = 'Session expired. Please sign in again.') => {
     setSessionToken('');
@@ -312,11 +310,6 @@ export default function App() {
       return Math.abs(distanceFromCenter - radius) <= trackStroke + ringTouchTolerance;
     };
 
-    const isTouchLike =
-      typeof window !== 'undefined' &&
-      ((typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) ||
-        (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
-
     return (
       <main className="mx-auto max-w-5xl p-4 md:p-8">
         <div className="mb-3">
@@ -347,55 +340,9 @@ export default function App() {
             <div
               ref={dialRef}
               className="relative grid place-items-center select-none"
-              style={{ width: dialSize, height: dialSize, touchAction: isTouchDialDraggingRef.current ? 'none' : 'auto' }}
-              onPointerDown={
-                isTouchLike
-                  ? undefined
-                  : (event) => {
-                    if (!shouldStartDialDrag(event)) {
-                      return;
-                    }
-                    setIsDialDragging(true);
-                    updateDialFromEvent(event);
-                  }
-              }
-              onPointerMove={
-                isTouchLike
-                  ? undefined
-                  : (event) => {
-                    if (!isDialDragging) return;
-                    updateDialFromEvent(event);
-                  }
-              }
-              onPointerUp={isTouchLike ? undefined : () => setIsDialDragging(false)}
-              onPointerLeave={isTouchLike ? undefined : () => setIsDialDragging(false)}
-              onPointerCancel={isTouchLike ? undefined : () => setIsDialDragging(false)}
-              onTouchStart={(event) => {
-                const touch = event.touches[0];
-                if (!touch) return;
-                if (!shouldStartDialDrag({ clientX: touch.clientX, clientY: touch.clientY })) {
-                  isTouchDialDraggingRef.current = false;
-                  return;
-                }
-                isTouchDialDraggingRef.current = true;
-                updateDialFromEvent({ clientX: touch.clientX, clientY: touch.clientY });
-                // Trigger style refresh so touch-action switches to `none` while dragging.
-                setTargetDraft((prev) => prev);
-              }}
+              style={{ width: dialSize, height: dialSize, touchAction: 'auto' }}
               onTouchMove={(event) => {
-                if (!isTouchDialDraggingRef.current) return;
-                const touch = event.touches[0];
-                if (!touch) return;
-                updateDialFromEvent({ clientX: touch.clientX, clientY: touch.clientY });
-              }}
-              onTouchEnd={() => {
-                isTouchDialDraggingRef.current = false;
-                // Trigger style refresh so touch-action returns to `auto`.
-                setTargetDraft((prev) => prev);
-              }}
-              onTouchCancel={() => {
-                isTouchDialDraggingRef.current = false;
-                setTargetDraft((prev) => prev);
+                event.preventDefault();
               }}
             >
               <svg width={dialSize} height={dialSize}>
