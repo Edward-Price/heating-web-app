@@ -2,12 +2,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY apps/api ./apps/api
+COPY apps/api/package*.json ./
+RUN npm install --omit=dev
 
-RUN npm ci --omit=dev
+COPY apps/api ./
 
 ENV API_PORT=3001
 EXPOSE 3001
 
-CMD ["node", "apps/api/src/server.js"]
+CMD ["node", "src/server.js"]
