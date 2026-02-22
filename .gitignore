@@ -5,3 +5,10 @@ dist
 build
 coverage
 .DS_Store
+
+# Runtime stats database
+apps/data/*.sqlite
+apps/data/*.sqlite-shm
+apps/data/*.sqlite-wal
+apps/data/*.jsonl
+apps/data/*.jsonl.migrated

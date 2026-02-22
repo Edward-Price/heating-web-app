@@ -19,6 +19,23 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+html.dark body {
+  color: #e2e8f0;
+  background: linear-gradient(180deg, #0b1220 0%, #0f172a 45%, #0f172a 100%);
+}
+
 #root {
   overflow: visible;
+}
+
+html.dark .text-foreground {
+  color: #e2e8f0 !important;
+}
+
+html.dark .text-muted {
+  color: #94a3b8 !important;
+}
+
+html.dark .border-border {
+  border-color: #334155 !important;
 }

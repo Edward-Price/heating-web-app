@@ -1,4 +1,27 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+function loadEnvFile(envPath) {
+  if (!fs.existsSync(envPath)) return;
+  const text = fs.readFileSync(envPath, 'utf8');
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let value = line.slice(eq + 1).trim();
+    if ((value.startsWith('\"') && value.endsWith('\"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadEnvFile(path.resolve(__dirname, '../../../.env'));
+loadEnvFile(path.resolve(process.cwd(), '.env'));
 
 const {
   login,
@@ -9,6 +32,7 @@ const {
   getZoneSchedule,
 } = require('./providerClient');
 const { sendJson, readJson } = require('./http');
+const { appendSnapshot, queryZoneSeries } = require('./statsStore');
 const {
   createSession,
   deleteSession,
@@ -19,6 +43,14 @@ const {
 } = require('./sessionStore');
 
 const PORT = process.env.API_PORT ? Number(process.env.API_PORT) : 3001;
+const STATS_POLL_MINUTES = process.env.STATS_POLL_MINUTES ? Number(process.env.STATS_POLL_MINUTES) : 15;
+const STATS_PROVIDER_EMAIL = process.env.STATS_PROVIDER_EMAIL || '';
+const STATS_PROVIDER_PASSWORD = process.env.STATS_PROVIDER_PASSWORD || '';
+
+const collectorState = {
+  providerSession: null,
+  seqState: { sequence: 0 },
+};
 
 function requireSession(req, res) {
   const token = extractTokenFromRequest(req);
@@ -100,6 +132,52 @@ function parseState(providerResponse) {
   }
 
   return byDeviceId;
+}
+
+async function runStatsCollectorTick() {
+  if (!STATS_PROVIDER_EMAIL || !STATS_PROVIDER_PASSWORD) {
+    return;
+  }
+
+  try {
+    if (!collectorState.providerSession) {
+      collectorState.providerSession = await login(STATS_PROVIDER_EMAIL, STATS_PROVIDER_PASSWORD);
+      collectorState.seqState = { sequence: 0 };
+      console.log('[api][stats] collector logged in');
+    }
+
+    const devicesResponse = await getDevices(collectorState.providerSession, collectorState.seqState);
+    const stateResponse = await getState(collectorState.providerSession, collectorState.seqState);
+    const devices = parseDevices(devicesResponse);
+    const stateByDeviceId = parseState(stateResponse);
+
+    const points = devices
+      .filter((d) => d && (d.type === 'zone' || d.type === 'hotWater'))
+      .map((d) => {
+        const state = stateByDeviceId[d.id] || stateByDeviceId[String(d.id)] || {};
+        return {
+          deviceId: Number(d.id),
+          name: d.name,
+          type: d.type,
+          currentTemp: state.currentTemp,
+          targetTemp: state.targetTemp,
+        };
+      })
+      .filter((p) => Number.isFinite(Number(p.currentTemp)) || Number.isFinite(Number(p.targetTemp)));
+
+    const inserted = appendSnapshot({
+      collectedAt: new Date().toISOString(),
+      points,
+    });
+
+    if (inserted > 0) {
+      console.log(`[api][stats] collector wrote ${inserted} points`);
+    }
+  } catch (err) {
+    collectorState.providerSession = null;
+    collectorState.seqState = { sequence: 0 };
+    console.warn('[api][stats] collector tick failed', err && err.message ? err.message : err);
+  }
 }
 
 function extractProviderError(message) {
@@ -281,12 +359,16 @@ function parseSchedule(providerResponse) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    const reqUrl = req.url || '/';
+    const pathOnly = reqUrl.split('?')[0] || '/';
+    const searchParams = new URLSearchParams(reqUrl.includes('?') ? reqUrl.slice(reqUrl.indexOf('?') + 1) : '');
+
     if (req.method === 'OPTIONS') {
       sendJson(res, 200, { ok: true });
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
+    if (req.method === 'GET' && pathOnly === '/health') {
       sendJson(res, 200, {
         ok: true,
         service: 'api',
@@ -300,7 +382,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/auth/login') {
+    if (req.method === 'POST' && pathOnly === '/auth/login') {
       const body = await readJson(req);
       const email = typeof body.email === 'string' ? body.email.trim() : '';
       const password = typeof body.password === 'string' ? body.password : '';
@@ -326,14 +408,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/auth/logout') {
+    if (req.method === 'POST' && pathOnly === '/auth/logout') {
       const token = extractTokenFromRequest(req);
       if (token) deleteSession(token);
       sendJson(res, 200, { ok: true });
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/devices') {
+    if (req.method === 'GET' && pathOnly === '/devices') {
       const auth = requireSession(req, res);
       if (!auth) return;
 
@@ -343,7 +425,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/state') {
+    if (req.method === 'GET' && pathOnly === '/state') {
       const auth = requireSession(req, res);
       if (!auth) return;
 
@@ -353,7 +435,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const zoneWriteMatch = req.url && req.url.match(/^\/zones\/(\d+)\/target-temp$/);
+    const zoneWriteMatch = pathOnly.match(/^\/zones\/(\d+)\/target-temp$/);
     if (req.method === 'POST' && zoneWriteMatch) {
       const auth = requireSession(req, res);
       if (!auth) return;
@@ -380,7 +462,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const zoneScheduleMatch = req.url && req.url.match(/^\/zones\/(\d+)\/schedule$/);
+    const zoneScheduleMatch = pathOnly.match(/^\/zones\/(\d+)\/schedule$/);
     if (req.method === 'GET' && zoneScheduleMatch) {
       const auth = requireSession(req, res);
       if (!auth) return;
@@ -398,7 +480,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const hwWriteMatch = req.url && req.url.match(/^\/hot-water\/(\d+)\/boost$/);
+    const hwWriteMatch = pathOnly.match(/^\/hot-water\/(\d+)\/boost$/);
     if (req.method === 'POST' && hwWriteMatch) {
       const auth = requireSession(req, res);
       if (!auth) return;
@@ -425,6 +507,22 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const statsZoneMatch = pathOnly.match(/^\/stats\/zone\/(\d+)$/);
+    if (req.method === 'GET' && statsZoneMatch) {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+
+      const zoneId = Number(statsZoneMatch[1]);
+      const range = searchParams.get('range') === 'month' ? 'month' : 'day';
+      const anchor = searchParams.get('anchor') || undefined;
+      const series = queryZoneSeries({ zoneId, range, anchor });
+      sendJson(res, 200, {
+        ok: true,
+        ...series,
+      });
+      return;
+    }
+
     sendJson(res, 404, { ok: false, error: 'Not found' });
   } catch (err) {
     sendJson(res, 500, {
@@ -436,4 +534,14 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[api] listening on http://localhost:${PORT}`);
+  if (!STATS_PROVIDER_EMAIL || !STATS_PROVIDER_PASSWORD) {
+    console.log('[api][stats] collector disabled (set STATS_PROVIDER_EMAIL and STATS_PROVIDER_PASSWORD)');
+    return;
+  }
+
+  console.log(`[api][stats] collector interval=${STATS_POLL_MINUTES}m`);
+  void runStatsCollectorTick();
+  setInterval(() => {
+    void runStatsCollectorTick();
+  }, STATS_POLL_MINUTES * 60 * 1000);
 });

@@ -1,18 +1,100 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, ChevronUp, Flame, House, Menu, Snowflake, X } from 'lucide-react';
+import { BarChart3, CalendarDays, ChevronUp, Flame, House, Menu, Moon, Snowflake, Sun, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
+const THEME_STORAGE_KEY = 'heating-web-theme';
 const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SCHEDULE_COLORS = [
   { bg: 'bg-sky-50', text: 'text-sky-700', bar: 'bg-sky-400', chip: 'bg-sky-500' },
   { bg: 'bg-orange-50', text: 'text-orange-700', bar: 'bg-orange-400', chip: 'bg-orange-500' },
   { bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-400', chip: 'bg-emerald-500' },
   { bg: 'bg-violet-50', text: 'text-violet-700', bar: 'bg-violet-400', chip: 'bg-violet-500' },
 ];
+
+function formatDayAnchor(dateLike) {
+  return new Date(dateLike).toISOString().slice(0, 10);
+}
+
+function formatMonthAnchor(dateLike) {
+  return new Date(dateLike).toISOString().slice(0, 7);
+}
+
+function shiftAnchor(anchor, range, delta) {
+  if (range === 'month') {
+    const [y, m] = String(anchor).split('-').map((n) => Number(n));
+    const base = new Date(Date.UTC(Number.isFinite(y) ? y : new Date().getUTCFullYear(), (Number.isFinite(m) ? m : 1) - 1, 1));
+    base.setUTCMonth(base.getUTCMonth() + delta);
+    return formatMonthAnchor(base);
+  }
+
+  const base = new Date(`${anchor}T00:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + delta);
+  return formatDayAnchor(base);
+}
+
+function createStatsConfig(range = 'day') {
+  const now = new Date();
+  return {
+    range,
+    anchor: range === 'month' ? formatMonthAnchor(now) : formatDayAnchor(now),
+  };
+}
+
+function buildSeriesPath(points, width, height, getValue, minY, maxY) {
+  if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY) || minY === maxY) {
+    return '';
+  }
+
+  const firstTs = Number(points[0].ts);
+  const lastTs = Number(points[points.length - 1].ts);
+  const spanTs = Math.max(1, lastTs - firstTs);
+  const innerW = width - 24;
+  const innerH = height - 18;
+  const topPad = 8;
+  const leftPad = 12;
+
+  let path = '';
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i];
+    const value = getValue(p);
+    if (!Number.isFinite(value)) continue;
+    const x = leftPad + ((Number(p.ts) - firstTs) / spanTs) * innerW;
+    const y = topPad + (1 - (value - minY) / (maxY - minY)) * innerH;
+    path += path ? ` L ${x} ${y}` : `M ${x} ${y}`;
+  }
+  return path;
+}
+
+function buildSeriesCoordinates(points, width, height, getValue, minY, maxY) {
+  if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+    return [];
+  }
+
+  const firstTs = Number(points[0].ts);
+  const lastTs = Number(points[points.length - 1].ts);
+  const spanTs = Math.max(1, lastTs - firstTs);
+  const innerW = width - 24;
+  const innerH = height - 18;
+  const topPad = 8;
+  const leftPad = 12;
+  const ySpan = Math.max(0.01, maxY - minY);
+
+  const coords = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i];
+    const value = getValue(p);
+    if (!Number.isFinite(value)) continue;
+    const x = leftPad + ((Number(p.ts) - firstTs) / spanTs) * innerW;
+    const y = topPad + (1 - (value - minY) / ySpan) * innerH;
+    coords.push({ x, y, value });
+  }
+  return coords;
+}
 
 function createDefaultDayPeriods() {
   return [
@@ -93,19 +175,28 @@ export default function App() {
   const [selectedZoneId, setSelectedZoneId] = useState(null);
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) || 'light');
   const [activeTab, setActiveTab] = useState('home');
   const [scheduleZoneId, setScheduleZoneId] = useState(null);
   const [scheduleDayIndex, setScheduleDayIndex] = useState(null);
   const [scheduleByZone, setScheduleByZone] = useState({});
+  const [scheduleLoadingByZone, setScheduleLoadingByZone] = useState({});
   const [expandedScheduleDays, setExpandedScheduleDays] = useState({});
+  const [statsConfigByZone, setStatsConfigByZone] = useState({});
+  const [statsSeriesByZone, setStatsSeriesByZone] = useState({});
+  const [statsLoadingByZone, setStatsLoadingByZone] = useState({});
   const [connectionState, setConnectionState] = useState('disconnected');
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statsPullDistance, setStatsPullDistance] = useState(0);
+  const [isStatsRefreshing, setIsStatsRefreshing] = useState(false);
   const isLoadingRef = useRef(false);
   const dialPointerIdRef = useRef(null);
   const scheduleScrollerRef = useRef(null);
   const contentRef = useRef(null);
   const pullStartYRef = useRef(null);
+  const statsContentRef = useRef(null);
+  const statsPullStartYRef = useRef(null);
 
   const clearClientSession = useCallback((message = 'Session expired. Please sign in again.') => {
     setSessionToken('');
@@ -208,10 +299,31 @@ export default function App() {
   const scheduleDevices = useMemo(() => devices, [devices]);
 
   useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
     if (sessionToken) {
       void loadDashboard();
     }
   }, [sessionToken, loadDashboard]);
+
+  useEffect(() => {
+    if (!zones.length) return;
+    setStatsConfigByZone((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const zone of zones) {
+        const key = String(zone.id);
+        if (!next[key]) {
+          next[key] = createStatsConfig('day');
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [zones]);
 
   const selectedZone = useMemo(
     () => devices.find((d) => d.type === 'zone' && Number(d.id) === Number(selectedZoneId)) || null,
@@ -274,6 +386,10 @@ export default function App() {
   }
 
 
+  function toggleTheme() {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }
+
   function onSelectTab(tab) {
     setActiveTab(tab);
     if (tab !== 'home') {
@@ -282,6 +398,64 @@ export default function App() {
     if (tab === 'home') {
       setStatus('');
     }
+  }
+
+  async function fetchZoneStats(zoneId, overrideConfig) {
+    const key = String(zoneId);
+    const config = overrideConfig || statsConfigByZone[key] || createStatsConfig('day');
+    const range = config.range === 'month' ? 'month' : 'day';
+    const anchor = config.anchor;
+
+    setStatsLoadingByZone((prev) => ({ ...prev, [key]: true }));
+    try {
+      const qs = new URLSearchParams({ range, anchor }).toString();
+      const res = await apiGet(`/stats/zone/${zoneId}?${qs}`);
+      const points = Array.isArray(res.points) ? res.points : [];
+      setStatsSeriesByZone((prev) => ({
+        ...prev,
+        [key]: {
+          zoneId: Number(zoneId),
+          range,
+          anchor,
+          points,
+          from: res.from || null,
+          to: res.to || null,
+        },
+      }));
+    } catch (err) {
+      setStatus(`Stats load failed: ${String(err.message || err)}`);
+    } finally {
+      setStatsLoadingByZone((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'stats' || !zones.length) return;
+    for (const zone of zones) {
+      const key = String(zone.id);
+      if (!statsSeriesByZone[key]) {
+        const config = statsConfigByZone[key] || createStatsConfig('day');
+        void fetchZoneStats(zone.id, config);
+      }
+    }
+  }, [activeTab, zones, statsSeriesByZone, statsConfigByZone]);
+
+  function setZoneStatsRange(zoneId, range) {
+    const key = String(zoneId);
+    const nextConfig = createStatsConfig(range);
+    setStatsConfigByZone((prev) => ({ ...prev, [key]: nextConfig }));
+    void fetchZoneStats(zoneId, nextConfig);
+  }
+
+  function shiftZoneStats(zoneId, delta) {
+    const key = String(zoneId);
+    const currentConfig = statsConfigByZone[key] || createStatsConfig('day');
+    const nextConfig = {
+      ...currentConfig,
+      anchor: shiftAnchor(currentConfig.anchor, currentConfig.range, delta),
+    };
+    setStatsConfigByZone((prev) => ({ ...prev, [key]: nextConfig }));
+    void fetchZoneStats(zoneId, nextConfig);
   }
 
   function getZoneSchedule(zoneId) {
@@ -381,22 +555,19 @@ export default function App() {
   }
 
   async function openScheduleZone(zoneId) {
+    const zoneKey = String(zoneId);
     setScheduleZoneId(zoneId);
     setScheduleDayIndex(null);
+    setScheduleLoadingByZone((prev) => ({ ...prev, [zoneKey]: true }));
     try {
       const res = await apiGet(`/zones/${zoneId}/schedule`);
       const week = normalizeScheduleWeekPayload(res.week);
-      console.log("[Schedule API] zone schedule response", {
-        zoneId,
-        scheduleId: res.scheduleId ?? null,
-        rawWeek: res.week,
-        normalizedWeek: week,
-        providerResponse: res.providerResponse ?? null,
-      });
-      setScheduleByZone((prev) => ({ ...prev, [String(zoneId)]: week }));
+      setScheduleByZone((prev) => ({ ...prev, [zoneKey]: week }));
       setStatus('');
     } catch (err) {
       setStatus(`Schedule load failed: ${String(err.message || err)}`);
+    } finally {
+      setScheduleLoadingByZone((prev) => ({ ...prev, [zoneKey]: false }));
     }
   }
 
@@ -417,7 +588,7 @@ export default function App() {
     ];
 
     return (
-      <nav className="shrink-0 border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+      <nav className="shrink-0 border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
         <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 py-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -453,6 +624,23 @@ export default function App() {
     }
   }, [isRefreshing, loadDashboard]);
 
+  const runStatsPullRefresh = useCallback(async () => {
+    if (isStatsRefreshing) return;
+    setIsStatsRefreshing(true);
+    try {
+      await loadDashboard();
+      await Promise.all(
+        zones.map((zone) => {
+          const key = String(zone.id);
+          const config = statsConfigByZone[key] || createStatsConfig('day');
+          return fetchZoneStats(zone.id, config);
+        })
+      );
+    } finally {
+      setIsStatsRefreshing(false);
+    }
+  }, [isStatsRefreshing, loadDashboard, zones, statsConfigByZone, fetchZoneStats]);
+
   const onContentTouchStart = useCallback((event) => {
     const el = contentRef.current;
     if (!el) return;
@@ -487,6 +675,39 @@ export default function App() {
     }
   }, [pullDistance, runPullRefresh]);
 
+  const onStatsTouchStart = useCallback((event) => {
+    const el = statsContentRef.current;
+    if (!el) return;
+    if (el.scrollTop > 0) {
+      statsPullStartYRef.current = null;
+      return;
+    }
+    statsPullStartYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+
+  const onStatsTouchMove = useCallback((event) => {
+    const el = statsContentRef.current;
+    const startY = statsPullStartYRef.current;
+    if (!el || startY === null || el.scrollTop > 0) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+    if (delta <= 0) {
+      setStatsPullDistance(0);
+      return;
+    }
+    setStatsPullDistance(Math.min(84, delta * 0.45));
+  }, []);
+
+  const onStatsTouchEnd = useCallback(() => {
+    const shouldRefresh = statsPullDistance >= 56;
+    statsPullStartYRef.current = null;
+    setStatsPullDistance(0);
+    if (shouldRefresh) {
+      void runStatsPullRefresh();
+    }
+  }, [statsPullDistance, runStatsPullRefresh]);
+
   if (!loggedIn) {
     return (
       <main className="mx-auto max-w-5xl p-4 pb-24 md:p-8">
@@ -508,6 +729,11 @@ export default function App() {
 
   if (activeTab !== 'home') {
     if (activeTab === 'stats') {
+      const statsPullProgress = Math.min(1, statsPullDistance / 56);
+      const statsRingRadius = 10;
+      const statsRingCircumference = 2 * Math.PI * statsRingRadius;
+      const statsRingDashOffset = statsRingCircumference * (1 - statsPullProgress);
+
       return (
         <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
           <header className="mb-3 shrink-0">
@@ -517,11 +743,150 @@ export default function App() {
             <h1 className="text-3xl font-bold tracking-tight text-foreground">Stats</h1>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <Card className="mt-2">
-              <h2 className="text-xl font-semibold text-foreground">Stats</h2>
-              <p className="mt-2 text-sm text-muted">Statistics screen coming soon.</p>
-            </Card>
+          <div
+            ref={statsContentRef}
+            className="min-h-0 flex-1 overflow-y-auto"
+            onTouchStart={onStatsTouchStart}
+            onTouchMove={onStatsTouchMove}
+            onTouchEnd={onStatsTouchEnd}
+            onTouchCancel={onStatsTouchEnd}
+          >
+            <div className="flex justify-center" style={{ height: statsPullDistance > 0 || isStatsRefreshing ? 36 : 0 }}>
+              <div className="mt-1.5 h-6 w-6">
+                <svg
+                  viewBox="0 0 24 24"
+                  className={isStatsRefreshing ? 'h-6 w-6 animate-spin' : 'h-6 w-6'}
+                  aria-hidden="true"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r={statsRingRadius}
+                    fill="none"
+                    stroke="#cbd5e1"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r={statsRingRadius}
+                    fill="none"
+                    stroke="#475569"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    transform="rotate(-90 12 12)"
+                    strokeDasharray={statsRingCircumference}
+                    strokeDashoffset={isStatsRefreshing ? statsRingCircumference * 0.2 : statsRingDashOffset}
+                    style={{ transition: isStatsRefreshing ? 'none' : 'stroke-dashoffset 80ms linear' }}
+                  />
+                </svg>
+              </div>
+            </div>
+
+            <section
+              className="grid gap-3 pb-2"
+              style={{ transform: `translateY(${statsPullDistance}px)`, transition: statsPullDistance === 0 ? 'transform 140ms ease' : 'none' }}
+            >
+              {zones.map((zone) => {
+                const key = String(zone.id);
+                const config = statsConfigByZone[key] || createStatsConfig('day');
+                const series = statsSeriesByZone[key] || { points: [] };
+                const isLoading = Boolean(statsLoadingByZone[key]);
+                const points = Array.isArray(series.points)
+                  ? series.points
+                      .map((p) => ({
+                        ...p,
+                        ts: Number(p.ts || Date.parse(p.timestamp || '')),
+                        currentTemp: Number.isFinite(Number(p.currentTemp)) ? Number(p.currentTemp) : null,
+                        targetTemp: Number.isFinite(Number(p.targetTemp)) ? Number(p.targetTemp) : null,
+                      }))
+                      .filter((p) => Number.isFinite(p.ts))
+                      .sort((a, b) => a.ts - b.ts)
+                  : [];
+
+                const values = points
+                  .flatMap((p) => [p.currentTemp, p.targetTemp])
+                  .filter((n) => Number.isFinite(n));
+                const minVal = values.length ? Math.floor(Math.min(...values) - 1) : 10;
+                const maxVal = values.length ? Math.ceil(Math.max(...values) + 1) : 25;
+                const graphW = 720;
+                const graphH = 220;
+                const currentPath = buildSeriesPath(points, graphW, graphH, (p) => p.currentTemp, minVal, maxVal);
+                const targetPath = buildSeriesPath(points, graphW, graphH, (p) => p.targetTemp, minVal, maxVal);
+                const currentCoords = buildSeriesCoordinates(points, graphW, graphH, (p) => p.currentTemp, minVal, maxVal);
+                const targetCoords = buildSeriesCoordinates(points, graphW, graphH, (p) => p.targetTemp, minVal, maxVal);
+                const xStart = points.length ? new Date(points[0].ts) : null;
+                const xEnd = points.length ? new Date(points[points.length - 1].ts) : null;
+
+                return (
+                  <Card key={zone.id} className="overflow-hidden">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex rounded-md border border-border p-0.5">
+                          <button
+                            type="button"
+                            className={`rounded px-2 py-1 text-xs font-semibold ${config.range === 'day' ? 'bg-accent text-white' : 'text-foreground'}`}
+                            onClick={() => setZoneStatsRange(zone.id, 'day')}
+                          >
+                            Day
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded px-2 py-1 text-xs font-semibold ${config.range === 'month' ? 'bg-accent text-white' : 'text-foreground'}`}
+                            onClick={() => setZoneStatsRange(zone.id, 'month')}
+                          >
+                            Month
+                          </button>
+                        </div>
+                        <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, -1)}>‹</Button>
+                        <div className="min-w-[82px] text-center text-xs font-semibold text-muted">{config.anchor}</div>
+                        <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, 1)}>›</Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border bg-slate-50 p-2 dark:bg-slate-900">
+                      <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-52 w-full">
+                        <line x1="12" y1="24" x2="708" y2="24" stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+                        <line x1="12" y1="106" x2="708" y2="106" stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
+                        <line x1="12" y1="188" x2="708" y2="188" stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+                        {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
+                        {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
+                        {targetCoords.map((pt, idx) => (
+                          <circle key={`target-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#8b5cf6" />
+                        ))}
+                        {currentCoords.map((pt, idx) => (
+                          <circle key={`current-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#06b6d4" />
+                        ))}
+                      </svg>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
+                          Current
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-violet-500" />
+                          Target
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted">
+                        {points.length > 0 && xStart && xEnd
+                          ? `${points.length} sample${points.length === 1 ? '' : 's'} • ${xStart
+                              .toISOString()
+                              .slice(0, 16)
+                              .replace('T', ' ')} → ${xEnd.toISOString().slice(0, 16).replace('T', ' ')}`
+                          : 'No samples in this window'}
+                      </div>
+                    </div>
+
+                    {isLoading ? <p className="mt-2 text-xs text-muted">Loading samples…</p> : null}
+                  </Card>
+                );
+              })}
+            </section>
           </div>
 
           {renderBottomNav()}
@@ -529,12 +894,18 @@ export default function App() {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-              <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 shadow-xl">
+              <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                 <div className="mb-4 flex items-center justify-between">
                   <strong>Menu</strong>
                   <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
                 </div>
+                <div className="space-y-2">
+                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
+                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                </Button>
                 <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
+              </div>
               </aside>
             </>
           )}
@@ -544,6 +915,7 @@ export default function App() {
 
     const scheduleZone = selectedScheduleZone();
     const scheduleIsBinary = isBinaryScheduleDevice(scheduleZone);
+    const isScheduleZoneLoading = scheduleZoneId !== null && Boolean(scheduleLoadingByZone[String(scheduleZoneId)]);
     const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
 
     return (
@@ -565,7 +937,7 @@ export default function App() {
             >
               {scheduleZoneId !== null ? '‹' : <Menu className="h-5 w-5" />}
             </Button>
-            <div className="text-sm font-medium text-slate-500">
+            <div className="text-sm font-medium text-slate-500 dark:text-slate-300">
               {scheduleDayIndex !== null ? dayName : scheduleZone ? scheduleZone.name : 'Select a zone'}
             </div>
           </div>
@@ -595,7 +967,21 @@ export default function App() {
             </section>
           ) : scheduleDayIndex === null ? (
             <section className="grid gap-3">
-              {getZoneSchedule(scheduleZoneId).map((day, dayIdx) => (
+              {isScheduleZoneLoading
+                ? WEEK_DAYS.map((day) => (
+                    <Card key={`schedule-loading-${day}`} className="animate-pulse border border-slate-200/90">
+                      <div className="flex items-center justify-between">
+                        <div className="h-7 w-36 rounded bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-5 w-5 rounded bg-slate-200 dark:bg-slate-700" />
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
+                      </div>
+                    </Card>
+                  ))
+                : getZoneSchedule(scheduleZoneId).map((day, dayIdx) => (
                 <Card key={day.day} className="border border-slate-200/90">
                   <button
                     type="button"
@@ -603,9 +989,9 @@ export default function App() {
                     onClick={() => toggleScheduleDayExpanded(scheduleZoneId, dayIdx)}
                     aria-expanded={isScheduleDayExpanded(scheduleZoneId, dayIdx)}
                   >
-                    <h3 className="text-2xl font-semibold text-slate-900">{day.day}</h3>
+                    <h3 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{day.day}</h3>
                     <ChevronUp
-                      className={`h-5 w-5 text-slate-400 transition-transform ${
+                      className={`h-5 w-5 text-slate-400 dark:text-slate-300 transition-transform ${
                         isScheduleDayExpanded(scheduleZoneId, dayIdx) ? 'rotate-0' : 'rotate-180'
                       }`}
                     />
@@ -645,10 +1031,10 @@ export default function App() {
                               <div key={idx}>
                                 <div className="relative mb-1 h-7">
                                   <div
-                                    className={`absolute top-0 text-center text-sm font-semibold whitespace-nowrap ${color.text}`}
+                                    className={`absolute top-0 text-center text-sm font-semibold whitespace-nowrap ${color.text} dark:text-slate-200`}
                                     style={{ left: `${clampedLabelCenterPct}%`, transform: 'translateX(-50%)' }}
                                   >
-                                    {formatScheduleValue(period, scheduleIsBinary)} <span className="text-xs font-medium text-slate-500">→ {endLabel}</span>
+                                    {formatScheduleValue(period, scheduleIsBinary)} <span className="text-xs font-medium text-slate-500 dark:text-slate-300">→ {endLabel}</span>
                                   </div>
                                 </div>
                                 <div className="h-3 rounded-full bg-slate-100">
@@ -676,18 +1062,19 @@ export default function App() {
             </section>
           ) : (
             <section className="grid gap-3 pb-2">
-              <Card>
+              <Card className="py-3">
                 <div className="mb-2 flex items-center justify-between text-sm text-muted">
                   <span>{dayName}</span>
                   <span>24h timeline</span>
                 </div>
-                <div className="rounded-xl border border-border bg-slate-50 p-2">
-                  <div className="flex h-14 overflow-hidden rounded-lg border border-border bg-white">
+
+                <div className="mt-1">
+                  <div className="relative flex h-12 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800/80">
                     {getDayPeriods(scheduleZoneId, scheduleDayIndex)
                       .slice()
                       .sort((a, b) => a.start - b.start)
                       .map((period, idx) => {
-                        const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? '#22c55e' : '#94a3b8') : getTempScaleColor(period.temp);
+                        const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? "#22c55e" : "#94a3b8") : getTempScaleColor(period.temp);
                         const widthPercent = ((period.end - period.start) / 24) * 100;
                         return (
                           <div
@@ -700,12 +1087,13 @@ export default function App() {
                         );
                       })}
                   </div>
-                  <div className="mt-2 flex justify-between px-1 text-xs text-slate-400">
-                    <span>0:00</span>
-                    <span>6:00</span>
-                    <span>12:00</span>
-                    <span>18:00</span>
-                    <span>24:00</span>
+
+                  <div className="mt-2 grid grid-cols-5 px-0.5 text-xs text-slate-400 dark:text-slate-500">
+                    <span className="text-left">0:00</span>
+                    <span className="text-center">6:00</span>
+                    <span className="text-center">12:00</span>
+                    <span className="text-center">18:00</span>
+                    <span className="text-right">24:00</span>
                   </div>
                 </div>
               </Card>
@@ -720,7 +1108,7 @@ export default function App() {
                     <Card key={`${period.start}-${period.end}-${idx}`} className={`${color.bg}`}>
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-1.5 rounded-full" style={{ backgroundColor: barColor }} />
-                        <div className="min-w-[110px] text-base font-semibold text-slate-600">
+                        <div className="min-w-[110px] text-base font-semibold text-slate-600 dark:text-slate-200">
                           {formatHour(period.start)} - {formatHour(period.end)}
                         </div>
                         <div className="ml-auto flex items-center gap-2">
@@ -781,12 +1169,18 @@ export default function App() {
         {menuOpen && (
           <>
             <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-            <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 shadow-xl">
+            <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
               <div className="mb-4 flex items-center justify-between">
                 <strong>Menu</strong>
                 <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
               </div>
-              <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
+              <div className="space-y-2">
+                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
+                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                </Button>
+                <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
+              </div>
             </aside>
           </>
         )}
@@ -959,7 +1353,7 @@ export default function App() {
           </div>
 
           <div className="flex justify-center">
-            <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground">
+            <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
               {heating ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
               {heating ? 'Heating' : 'Idle'}
             </div>
@@ -987,6 +1381,7 @@ export default function App() {
   const hotWater = devices.find((d) => d.type === 'hotWater');
   const connection = mapConnectionStatus(connectionState);
   const isErrorStatus = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
+  const isDashboardLoading = connectionState === 'loading' && zones.length === 0;
   const pullProgress = Math.min(1, pullDistance / 56);
   const ringRadius = 10;
   const ringCircumference = 2 * Math.PI * ringRadius;
@@ -1050,44 +1445,63 @@ export default function App() {
             <p className={`mb-3 text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
           ) : null}
 
-          <section className="mb-3 grid gap-3 md:grid-cols-2">
-          {zones.map((zone) => {
-            const state = zoneState(stateByDeviceId, zone.id);
-            const heatingOn = Boolean(state.heatingOn);
-            const showLoading = !state || typeof state.currentTemp !== 'number' || typeof state.targetTemp !== 'number';
-            return (
-              <Card
-                key={zone.id}
-                className="cursor-pointer"
-                onClick={() => {
-                  setSelectedZoneId(zone.id);
-                  setTargetDraft(typeof state.targetTemp === 'number' ? state.targetTemp : 20);
-                }}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                  <div className="text-4xl font-bold tracking-tight text-foreground">
-                    {showLoading ? '--.-°' : formatTemperature(state.currentTemp)}
+          {isDashboardLoading ? (
+            <section className="mb-3 grid gap-3 md:grid-cols-2">
+              {[1, 2, 3].map((idx) => (
+                <Card key={`zone-loading-${idx}`} className="animate-pulse">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="h-6 w-36 rounded bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-10 w-20 rounded bg-slate-200 dark:bg-slate-700" />
                   </div>
-                </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="h-7 w-24 rounded-full bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-5 w-20 rounded bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                  <div className="mt-2 h-4 w-40 rounded bg-slate-200 dark:bg-slate-700" />
+                </Card>
+              ))}
+              <p className="col-span-full text-center text-sm text-muted">Loading zones…</p>
+            </section>
+          ) : (
+            <section className="mb-3 grid gap-3 md:grid-cols-2">
+            {zones.map((zone) => {
+              const state = zoneState(stateByDeviceId, zone.id);
+              const heatingOn = Boolean(state.heatingOn);
+              const showLoading = !state || typeof state.currentTemp !== 'number' || typeof state.targetTemp !== 'number';
+              return (
+                <Card
+                  key={zone.id}
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setSelectedZoneId(zone.id);
+                    setTargetDraft(typeof state.targetTemp === 'number' ? state.targetTemp : 20);
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
+                    <div className="text-4xl font-bold tracking-tight text-foreground">
+                      {showLoading ? '--.-°' : formatTemperature(state.currentTemp)}
+                    </div>
+                  </div>
 
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <div className="rounded-full bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
-                    {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="rounded-full bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
+                      {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-muted">
+                      {heatingOn ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
+                      <span>{showLoading ? 'Loading…' : heatingOn ? 'Heating' : 'Idle'}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-sm text-muted">
-                    {heatingOn ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
-                    <span>{showLoading ? 'Loading…' : heatingOn ? 'Heating' : 'Idle'}</span>
-                  </div>
-                </div>
 
-                {showLoading ? (
-                  <p className="mt-2 text-xs font-semibold text-muted">Fetching latest zone state…</p>
-                ) : null}
-              </Card>
-            );
-          })}
-        </section>
+                  {showLoading ? (
+                    <p className="mt-2 text-xs font-semibold text-muted">Fetching latest zone state…</p>
+                  ) : null}
+                </Card>
+              );
+            })}
+          </section>
+          )}
 
           {hotWater && (
             <Card>
@@ -1113,12 +1527,18 @@ export default function App() {
       {menuOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-          <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 shadow-xl">
+          <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
             <div className="mb-4 flex items-center justify-between">
               <strong>Menu</strong>
               <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
             </div>
-            <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
+            <div className="space-y-2">
+                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
+                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                </Button>
+                <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
+              </div>
           </aside>
         </>
       )}

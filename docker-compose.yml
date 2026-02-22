@@ -9,6 +9,12 @@ services:
       PROVIDER_REST_BASE: https://app.beanbag.online/api/UserRestAPI
       PROVIDER_WS_URL: wss://app.beanbag.online/api/TransactionRestAPI/ConnectWebSocket
       PROVIDER_WS_PROTOCOL: BB-BO-01
+      STATS_PROVIDER_EMAIL: ${STATS_PROVIDER_EMAIL}
+      STATS_PROVIDER_PASSWORD: ${STATS_PROVIDER_PASSWORD}
+      STATS_POLL_MINUTES: ${STATS_POLL_MINUTES:-15}
+      STATS_DB_PATH: /app/apps/data/stats.sqlite
+    volumes:
+      - ./apps/data:/app/apps/data
     restart: unless-stopped
 
   web:
