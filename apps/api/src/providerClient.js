@@ -218,10 +218,32 @@ async function setHotWaterBoost(providerSession, state, deviceId, minutes) {
   });
 }
 
+async function getZoneSchedule(providerSession, state, zoneIdOrIndex) {
+  const n = Number(zoneIdOrIndex);
+  const primary = Number.isFinite(n) ? n : 1;
+  const fallbacks = Array.from(new Set([primary, 1, 2]));
+  let lastErr = null;
+
+  for (const idx of fallbacks) {
+    try {
+      return await sendProviderRequest(providerSession, state, {
+        SI: 17,
+        HI: 22,
+        payload: [idx],
+      });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr || new Error('Provider schedule read failed');
+}
+
 module.exports = {
   login,
   getDevices,
   getState,
   writeZoneTargetTemp,
   setHotWaterBoost,
+  getZoneSchedule,
 };

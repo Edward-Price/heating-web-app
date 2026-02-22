@@ -6,6 +6,7 @@ const {
   getState,
   writeZoneTargetTemp,
   setHotWaterBoost,
+  getZoneSchedule,
 } = require('./providerClient');
 const { sendJson, readJson } = require('./http');
 const {
@@ -117,6 +118,167 @@ function extractProviderError(message) {
   };
 }
 
+function mapScheduleTemp(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 18;
+  return Math.abs(n) > 60 ? n / 10 : n;
+}
+
+function normalizeDayEntries(entries) {
+  const points = Array.isArray(entries)
+    ? entries
+        .map((item) => ({ O: Number(item && item.O), T: item && item.T }))
+        .filter((item) => Number.isFinite(item.O))
+        .sort((a, b) => a.O - b.O)
+    : [];
+
+  const periods = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const current = points[i];
+    const next = points[i + 1];
+    const startMin = Math.max(0, Math.min(1440, current.O));
+    const endMin = Math.max(startMin, Math.min(1440, next ? next.O : 1440));
+    if (startMin >= endMin) continue;
+
+    periods.push({
+      start: Math.floor(startMin / 60),
+      end: Math.floor(endMin / 60),
+      temp: mapScheduleTemp(current.T),
+    });
+  }
+
+  if (!periods.length) {
+    return [{ start: 0, end: 24, temp: 18 }];
+  }
+  return periods;
+}
+
+function parseSchedule(providerResponse) {
+  const payload = extractResponsePayload(providerResponse);
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object'
+      ? [payload]
+      : [];
+
+  const top = list.find((item) => item && typeof item === 'object' && Array.isArray(item.D)) || null;
+  if (!top && !list.length) {
+    return { scheduleId: null, week: [] };
+  }
+
+  const scheduleId = Number((top && top.I) ?? (list[0] && list[0].I));
+
+  const isEntryPoint = (entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const o = Number(entry.O);
+    return Number.isFinite(o);
+  };
+
+  const extractDayIndex = (entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const candidates = [entry.DI, entry.DW, entry.W, entry.DAY, entry.Day, entry.day, entry.N];
+    for (const candidate of candidates) {
+      const n = Number(candidate);
+      if (!Number.isFinite(n)) continue;
+      if (n >= 0 && n <= 6) return Math.floor(n);
+      if (n >= 1 && n <= 7) return Math.floor(n - 1);
+    }
+    return null;
+  };
+
+  const mapWeek = (dayBlocks) => ({
+    scheduleId,
+    week: dayBlocks.slice(0, 7).map((day, idx) => ({
+      dayIndex: idx,
+      periods: normalizeDayEntries(day.D),
+    })),
+  });
+
+  // Shape A: top.D = [{ D:[{O,T}, ...] }, ...] (Mon..Sun)
+  if (top && Array.isArray(top.D)) {
+    const weekBlocks = top.D.filter((day) => day && typeof day === 'object' && Array.isArray(day.D));
+    if (weekBlocks.length >= 7) {
+      return mapWeek(weekBlocks);
+    }
+  }
+
+  // Shape B: payload itself is day blocks, each with D:[{O,T},...]
+  const listWeekBlocks = list.filter(
+    (item) => item && typeof item === 'object' && Array.isArray(item.D) && item.D.some(isEntryPoint)
+  );
+  if (listWeekBlocks.length >= 7) {
+    return mapWeek(listWeekBlocks);
+  }
+
+  // Shape C: flat entries in top.D
+  if (top && Array.isArray(top.D) && top.D.length && top.D.every(isEntryPoint)) {
+    const grouped = Array.from({ length: 7 }, () => []);
+    let hasDayIndex = false;
+
+    for (const entry of top.D) {
+      const dayIndex = extractDayIndex(entry);
+      if (dayIndex !== null) {
+        grouped[dayIndex].push(entry);
+        hasDayIndex = true;
+      }
+    }
+
+    if (hasDayIndex) {
+      return {
+        scheduleId,
+        week: grouped.map((entries, dayIndex) => ({
+          dayIndex,
+          periods: entries.length ? normalizeDayEntries(entries) : [{ start: 0, end: 24, temp: 18 }],
+        })),
+      };
+    }
+
+    // Shape C2: flat weekly stream split by sentinel markers (O/T = 65535).
+    const isSentinel = (entry) => {
+      const o = Number(entry && entry.O);
+      const t = Number(entry && entry.T);
+      return (Number.isFinite(o) && o >= 65535) || (Number.isFinite(t) && t >= 65535);
+    };
+
+    const dayBuckets = [];
+    let currentBucket = [];
+    for (const entry of top.D) {
+      if (isSentinel(entry)) {
+        if (currentBucket.length) {
+          dayBuckets.push(currentBucket);
+          currentBucket = [];
+        }
+        continue;
+      }
+      currentBucket.push(entry);
+    }
+    if (currentBucket.length) {
+      dayBuckets.push(currentBucket);
+    }
+
+    if (dayBuckets.length >= 2) {
+      return {
+        scheduleId,
+        week: Array.from({ length: 7 }, (_v, dayIndex) => ({
+          dayIndex,
+          periods: dayBuckets[dayIndex]?.length ? normalizeDayEntries(dayBuckets[dayIndex]) : [{ start: 0, end: 24, temp: 18 }],
+        })),
+      };
+    }
+
+    const shared = normalizeDayEntries(top.D);
+    return {
+      scheduleId,
+      week: Array.from({ length: 7 }, (_v, dayIndex) => ({
+        dayIndex,
+        periods: shared,
+      })),
+    };
+  }
+
+  return { scheduleId, week: [] };
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') {
@@ -215,6 +377,24 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       sendJson(res, 200, { ok: true, providerResponse });
+      return;
+    }
+
+    const zoneScheduleMatch = req.url && req.url.match(/^\/zones\/(\d+)\/schedule$/);
+    if (req.method === 'GET' && zoneScheduleMatch) {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+
+      const zoneId = Number(zoneScheduleMatch[1]);
+      const providerResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
+      const parsed = parseSchedule(providerResponse);
+      sendJson(res, 200, {
+        ok: true,
+        zoneId,
+        scheduleId: parsed.scheduleId,
+        week: parsed.week,
+        providerResponse,
+      });
       return;
     }
 
