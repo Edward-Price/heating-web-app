@@ -37,3 +37,17 @@ Services:
 - `docs` - copied protocol and migration docs
 
 Next step: replace stubs with real API/WS + DB implementation from `docs/migration-checklist.md`.
+
+## GitHub Action: Tailscale -> Portainer deploy
+
+Workflow file: `.github/workflows/deploy-portainer-tailscale.yml`
+
+Set these GitHub repository secrets:
+
+- `TAILSCALE_AUTHKEY`: reusable Tailscale auth key for CI
+- `PORTAINER_WEBHOOK_URL`: full Portainer stack webhook URL
+
+When you push to `main`/`master` (or run manually), the action:
+
+1. Joins your Tailscale network
+2. Calls the Portainer webhook to redeploy the stack
