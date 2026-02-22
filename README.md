@@ -51,3 +51,19 @@ When you push to `main`/`master` (or run manually), the action:
 
 1. Joins your Tailscale network
 2. Calls the Portainer webhook to redeploy the stack
+
+## Web Caching Policy (No PWA / No Service Worker)
+
+This project is intentionally **not** a PWA.
+
+- No service worker is registered.
+- Do not add `vite-plugin-pwa`, Workbox, or any `navigator.serviceWorker.register(...)` logic.
+- Keep updates server-driven so new deploys are picked up on reload.
+
+If a browser ever serves stale files after deploy:
+
+1. Hard refresh (`Cmd+Shift+R` on macOS, `Ctrl+F5` on Windows)
+2. Clear site data for the app origin
+3. In DevTools Console, run:
+   - `caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))`
+   - `navigator.serviceWorker?.getRegistrations().then(r => r.forEach(x => x.unregister()))`

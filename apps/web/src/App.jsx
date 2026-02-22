@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Flame, Menu, Snowflake, X } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, House, Menu, Snowflake, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
@@ -18,15 +18,14 @@ function formatTemperature(value) {
   return `${value.toFixed(1)}°`;
 }
 
-function mapConnectionStatus(statusText) {
-  const text = String(statusText || '').toLowerCase();
-  if (text.startsWith('loaded')) {
+function mapConnectionStatus(connectionState) {
+  if (connectionState === 'connected') {
     return { label: 'Connected', dotClass: 'bg-emerald-500' };
   }
-  if (text.includes('loading') || text.includes('refreshing')) {
+  if (connectionState === 'loading') {
     return { label: 'Reconnecting', dotClass: 'bg-amber-500' };
   }
-  if (text.includes('failed') || text.includes('error')) {
+  if (connectionState === 'error') {
     return { label: 'Connection error', dotClass: 'bg-rose-500' };
   }
   return { label: 'Disconnected', dotClass: 'bg-slate-400' };
@@ -42,8 +41,14 @@ export default function App() {
   const [selectedZoneId, setSelectedZoneId] = useState(null);
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('home');
+  const [connectionState, setConnectionState] = useState('disconnected');
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const isLoadingRef = useRef(false);
   const dialPointerIdRef = useRef(null);
+  const contentRef = useRef(null);
+  const pullStartYRef = useRef(null);
 
   const clearClientSession = useCallback((message = 'Session expired. Please sign in again.') => {
     setSessionToken('');
@@ -52,6 +57,7 @@ export default function App() {
     setMenuOpen(false);
     setDevices([]);
     setStateByDeviceId({});
+    setConnectionState('disconnected');
     setStatus(message);
   }, []);
 
@@ -102,7 +108,8 @@ export default function App() {
     }
     isLoadingRef.current = true;
     try {
-      setStatus('Loading devices and state...');
+      setConnectionState('loading');
+      setStatus((prev) => (prev && (prev.toLowerCase().includes('failed') || prev.toLowerCase().includes('error')) ? prev : ''));
       const devicesResult = await apiGet('/devices', tokenOverride);
       const stateResult = await apiGet('/state', tokenOverride);
       const fetchedDevices = Array.isArray(devicesResult.devices) ? devicesResult.devices : [];
@@ -126,12 +133,13 @@ export default function App() {
         return fetchedState;
       });
 
-      const countForStatus = fetchedDevices.length > 0 ? fetchedDevices.length : devices.length;
-      setStatus(`Loaded ${countForStatus} devices.`);
+      setConnectionState('connected');
+      setStatus((prev) => (prev && !prev.toLowerCase().includes('failed') && !prev.toLowerCase().includes('error') ? '' : prev));
     } catch (err) {
       if (err && err.message === 'Unauthorized') {
         return;
       }
+      setConnectionState('error');
       setStatus(`Load failed: ${String(err.message || err)}`);
     } finally {
       isLoadingRef.current = false;
@@ -143,6 +151,7 @@ export default function App() {
       void loadDashboard();
     }
   }, [sessionToken, loadDashboard]);
+
 
   const selectedZone = useMemo(
     () => devices.find((d) => d.type === 'zone' && Number(d.id) === Number(selectedZoneId)) || null,
@@ -204,9 +213,98 @@ export default function App() {
     }
   }
 
+
+  function onSelectTab(tab) {
+    setActiveTab(tab);
+    if (tab === 'home') {
+      setSelectedZoneId(null);
+      return;
+    }
+    setStatus(tab === 'schedule' ? 'Schedule screen coming soon.' : 'Stats screen coming soon.');
+  }
+
+  function renderBottomNav() {
+    const tabs = [
+      { key: 'schedule', label: 'Schedule', icon: CalendarDays },
+      { key: 'home', label: 'Home', icon: House },
+      { key: 'stats', label: 'Stats', icon: BarChart3 },
+    ];
+
+    return (
+      <nav className="shrink-0 border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+        <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 py-2">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const selected = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => onSelectTab(tab.key)}
+                className="flex flex-col items-center justify-center gap-1 py-1"
+                aria-label={tab.label}
+                aria-current={selected ? 'page' : undefined}
+              >
+                <Icon className={selected ? 'h-5 w-5 text-foreground' : 'h-5 w-5 text-slate-400'} />
+                <span className={selected ? 'text-xs font-semibold text-foreground' : 'text-xs font-medium text-slate-400'}>
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+    );
+  }
+
+
+  const runPullRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadDashboard();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, loadDashboard]);
+
+  const onContentTouchStart = useCallback((event) => {
+    const el = contentRef.current;
+    if (!el) return;
+    if (el.scrollTop > 0) {
+      pullStartYRef.current = null;
+      return;
+    }
+    pullStartYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+
+  const onContentTouchMove = useCallback((event) => {
+    const el = contentRef.current;
+    const startY = pullStartYRef.current;
+    if (!el || startY === null || el.scrollTop > 0) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+    if (delta <= 0) {
+      setPullDistance(0);
+      return;
+    }
+
+    setPullDistance(Math.min(84, delta * 0.45));
+  }, []);
+
+  const onContentTouchEnd = useCallback(() => {
+    const shouldRefresh = pullDistance >= 56;
+    pullStartYRef.current = null;
+    setPullDistance(0);
+    if (shouldRefresh) {
+      void runPullRefresh();
+    }
+  }, [pullDistance, runPullRefresh]);
+
   if (!loggedIn) {
     return (
-      <main className="mx-auto max-w-5xl p-4 md:p-8">
+      <main className="mx-auto max-w-5xl p-4 pb-24 md:p-8">
         <header className="mb-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold">Heating Web App</h1>
         </header>
@@ -219,6 +317,8 @@ export default function App() {
           </form>
         </Card>
         <p className="mt-3 text-sm text-muted">{status}</p>
+
+        {renderBottomNav()}
       </main>
     );
   }
@@ -411,12 +511,16 @@ export default function App() {
 
   const zones = devices.filter((d) => d.type === 'zone');
   const hotWater = devices.find((d) => d.type === 'hotWater');
-  const connection = mapConnectionStatus(status);
+  const connection = mapConnectionStatus(connectionState);
   const isErrorStatus = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
+  const pullProgress = Math.min(1, pullDistance / 56);
+  const ringRadius = 10;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const ringDashOffset = ringCircumference * (1 - pullProgress);
 
   return (
-    <main className="mx-auto max-w-5xl p-4 md:p-8">
-      <header className="mb-4">
+    <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
+      <header className="mb-3 shrink-0">
         <div className="mb-1 flex items-center justify-between">
           <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
           <div className="flex items-center gap-2 text-sm text-muted">
@@ -427,10 +531,52 @@ export default function App() {
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Home</h1>
       </header>
 
-      <div>
-        <p className={`mb-3 text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
+      <div
+        ref={contentRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onTouchStart={onContentTouchStart}
+        onTouchMove={onContentTouchMove}
+        onTouchEnd={onContentTouchEnd}
+        onTouchCancel={onContentTouchEnd}
+      >
+        <div className="flex justify-center" style={{ height: pullDistance > 0 || isRefreshing ? 36 : 0 }}>
+          <div className="mt-1.5 h-6 w-6">
+            <svg
+              viewBox="0 0 24 24"
+              className={isRefreshing ? 'h-6 w-6 animate-spin' : 'h-6 w-6'}
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r={ringRadius}
+                fill="none"
+                stroke="#cbd5e1"
+                strokeWidth="2"
+              />
+              <circle
+                cx="12"
+                cy="12"
+                r={ringRadius}
+                fill="none"
+                stroke="#475569"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                transform="rotate(-90 12 12)"
+                strokeDasharray={ringCircumference}
+                strokeDashoffset={isRefreshing ? ringCircumference * 0.2 : ringDashOffset}
+                style={{ transition: isRefreshing ? 'none' : 'stroke-dashoffset 80ms linear' }}
+              />
+            </svg>
+          </div>
+        </div>
 
-        <section className="mb-3 grid gap-3 md:grid-cols-2">
+        <div style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 140ms ease' : 'none' }}>
+          {status ? (
+            <p className={`mb-3 text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
+          ) : null}
+
+          <section className="mb-3 grid gap-3 md:grid-cols-2">
           {zones.map((zone) => {
             const state = zoneState(stateByDeviceId, zone.id);
             const heatingOn = Boolean(state.heatingOn);
@@ -469,23 +615,26 @@ export default function App() {
           })}
         </section>
 
-        {hotWater && (
-          <Card>
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-lg font-semibold text-foreground">{hotWater.name || 'Hot Water'}</h3>
-              <div className="flex items-center gap-1.5 text-sm text-muted">
-                <span className={`h-2 w-2 rounded-full ${zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                <span>{zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'On' : 'Off'}</span>
+          {hotWater && (
+            <Card>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold text-foreground">{hotWater.name || 'Hot Water'}</h3>
+                <div className="flex items-center gap-1.5 text-sm text-muted">
+                  <span className={`h-2 w-2 rounded-full ${zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  <span>{zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'On' : 'Off'}</span>
+                </div>
               </div>
-            </div>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <Button onClick={() => writeHotWater(hotWater.id, 60)}>Boost 1h</Button>
-              <Button onClick={() => writeHotWater(hotWater.id, 120)}>Boost 2h</Button>
-              <Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button>
-            </div>
-          </Card>
-        )}
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <Button onClick={() => writeHotWater(hotWater.id, 60)}>Boost 1h</Button>
+                <Button onClick={() => writeHotWater(hotWater.id, 120)}>Boost 2h</Button>
+                <Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button>
+              </div>
+            </Card>
+          )}
+        </div>
       </div>
+
+      {renderBottomNav()}
 
       {menuOpen && (
         <>
