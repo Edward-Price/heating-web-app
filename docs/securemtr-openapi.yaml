@@ -1,0 +1,315 @@
+openapi: 3.1.0
+info:
+  title: Secure Controls (Beanbag Cloud) — Confirmed REST & WS Handshake
+  version: "1.2.0"
+  description: |
+    This specification captures **only** behaviors **directly observed** in live captures
+    of the Secure Controls Android app (`com.secure.heatConnect`) using the vendor’s
+    Beanbag cloud. All IDs/tokens are placeholders (e.g., `{token}`, `{sessionId}`, `{gatewayID}`).
+    The WebSocket application protocol messages are cataloged in `secure_controls_asyncapi_v1.2.0.yaml`.
+
+servers:
+  - url: https://app.beanbag.online
+    description: Confirmed REST base
+
+tags:
+  - name: Login
+  - name: User
+  - name: Gateway
+  - name: WebSocket
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    RequestId:
+      name: Request-id
+      in: header
+      required: true
+      schema: { type: string, example: "1" }
+      description: Observed header on REST requests; value was "1" in captures.
+    SessionId:
+      name: Session-id
+      in: header
+      required: true
+      schema: { type: string, example: "{sessionId}" }
+      description: Session id from login; required in subsequent REST and in WS upgrade.
+
+  schemas:
+    RestEnvelope:
+      type: object
+      required: [ RI ]
+      properties:
+        RI:
+          type: string
+          example: "1"
+          description: Result indicator. Confirmed success value is the string "1".
+        D:
+          description: Data payload (shape varies by endpoint).
+
+    LoginULC:
+      type: object
+      required: [ ULC ]
+      properties:
+        ULC:
+          type: object
+          required: [ OI, P, NT, UEI ]
+          properties:
+            OI:
+              type: integer
+              example: 1550005
+              description: Observed constant.
+            P:
+              type: string
+              pattern: "^[0-9a-fA-F]{32}$"
+              example: "{md5(password)}"
+              description: P = MD5(password), 32-char lowercase hex.
+            NT:
+              type: string
+              example: "SetLogin"
+            UEI:
+              type: string
+              format: email
+              example: "{email}"
+
+    LoginData:
+      type: object
+      properties:
+        UI: { type: integer, description: user id }
+        SI: { type: integer, description: session id }
+        GD:
+          type: array
+          description: Gateway descriptors (fields observed; not guaranteed exhaustive).
+          items:
+            type: object
+            properties:
+              GMI: { type: string, example: "{gatewayID}" }
+              SN:  { type: string, example: "{serial}" }
+              HN:  { type: string, example: "{hostname}" }
+              CS:  { type: integer }
+              UR:  { type: integer }
+              HI:  { type: integer }
+              DT:  { type: integer }
+              DN:  { nullable: true }
+        JT:  { type: string, description: ES256 JWT; used as Bearer token, example: "{token}" }
+        JTT: { type: integer, description: JWT timestamp (epoch ms) }
+        USL: { type: array, items: {} }
+        UNL: { nullable: true }
+
+    UserInformationData:
+      type: object
+      properties:
+        T:   { type: string }
+        UPD:
+          type: object
+          properties:
+            FN: { type: string, example: "{firstName}" }
+            LN: { type: string, example: "{lastName}" }
+            MN: { nullable: true }
+            UEI:{ nullable: true }
+        CA:
+          type: object
+          properties:
+            DA: { nullable: true }
+            C:  { nullable: true }
+            PC: { nullable: true }
+        IPD:
+          type: object
+          properties:
+            FN: { nullable: true }
+            LN: { nullable: true }
+            CN: { nullable: true }
+            MN: { nullable: true }
+
+    UserListItem:
+      type: object
+      properties:
+        UI:
+          type: object
+          properties:
+            UI:  { type: integer, example: 1901131 }
+            T:   { type: string, example: "" }
+            FN:  { type: string, example: "{firstName}" }
+            LN:  { type: string, example: "{lastName}" }
+            UEI: { type: string, format: email, example: "{email}" }
+            MN:  { nullable: true }
+            ID:  { type: boolean, description: "Is default user?" }
+            CA:  { type: object }
+        UR: { type: integer, description: "User role (observed integer)" }
+
+paths:
+  /api/UserRestAPI/LoginRequest:
+    post:
+      tags: [ Login ]
+      summary: Login (confirmed ULC envelope)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginULC' }
+            example:
+              ULC: { OI: 1550005, P: "{md5(password)}", NT: "SetLogin", UEI: "{email}" }
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Login success (confirmed structure)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/RestEnvelope'
+                  - type: object
+                    properties:
+                      D: { $ref: '#/components/schemas/LoginData' }
+
+  /api/UserRestAPI/GetInstallations:
+    get:
+      tags: [ User ]
+      summary: Get installations (confirmed envelope)
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Confirmed envelope with RI/D
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RestEnvelope' }
+              examples:
+                empty: { value: { RI: "1", D: [] } }
+
+  /api/UserRestAPI/GetUserInformation:
+    get:
+      tags: [ User ]
+      summary: Get user information (confirmed)
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Confirmed envelope with user data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/RestEnvelope'
+                  - type: object
+                    properties:
+                      D: { $ref: '#/components/schemas/UserInformationData' }
+
+  /api/UserRestAPI/GetUserList:
+    get:
+      tags: [ User ]
+      summary: Get user list (confirmed)
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+        - name: gatewayMacId
+          in: query
+          required: true
+          schema: { type: string, example: "{gatewayID}" }
+        - name: lastUpdatedDateTime
+          in: query
+          required: true
+          schema: { type: integer, example: 0 }
+      responses:
+        '200':
+          description: Envelope with user list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/RestEnvelope'
+                  - type: object
+                    properties:
+                      D:
+                        type: array
+                        items: { $ref: '#/components/schemas/UserListItem' }
+
+  /api/UserRestAPI/GetInvitation:
+    get:
+      tags: [ User ]
+      summary: Get pending invitations (confirmed empty array)
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Envelope with invitations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RestEnvelope' }
+              example: { RI: "1", D: [] }
+
+  /api/UserRestAPI/IsGatewayConnected:
+    get:
+      tags: [ Gateway ]
+      summary: Is gateway connected (confirmed)
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+        - name: gatewayMacId
+          in: query
+          required: true
+          schema: { type: string, example: "{gatewayID}" }
+      responses:
+        '200':
+          description: Envelope with vendor connectivity code (opaque integer)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RestEnvelope' }
+              examples:
+                sample1701: { value: { RI: "1", D: 1701 } }
+                sample1702: { value: { RI: "1", D: 1702 } }
+
+x-websocket:
+  description: |
+    **WebSocket endpoint & handshake (confirmed)**
+    • URL: `wss://app.beanbag.online/api/TransactionRestAPI/ConnectWebSocket`
+    • Subprotocol: `BB-BO-01` (negotiated during the opening handshake).
+    • Required headers:
+        - `Authorization: Bearer {token}` (JWT from LoginRequest)
+        - `Session-id: {sessionId}`
+        - `Request-id: 1`
+
+    After `101 Switching Protocols`, no extra "Authorize" frame is sent; the first
+    app-layer message is a JSON `"Request"` envelope.
+
+    **Client envelope (requests):**
+    { "V":"1.0","DTS":<epoch>,"I":"{sessionId}-{rand32}","M":"Request",
+      "P":[ { "GMI":"{gatewayID}","HI":<op>,"SI":<sub> }, [ /* args */ ] ] }
+
+    **Server reply:** adds `"R"`; **Server notify:** uses `"M":"Notify"` with
+    `P:[{GMI,SI,HI:4}, [slot, {I,V,OT,D}]]`
+
+    **Refresh / bootstrap burst (observed order):**
+    1) `zones.read` (HI:49, SI:11)
+    2) `time.tick`  (HI:2,  SI:103) with `[DTS]`
+    3) `schedules.summary` (HI:5,  SI:1)
+    4) `device.metadata.read` (HI:17, SI:11)
+    5) `device.config.read`   (HI:14, SI:11)
+    6) `state.read`           (HI:3,  SI:1)
+
+  connection:
+    url: wss://app.beanbag.online/api/TransactionRestAPI/ConnectWebSocket
+    subprotocols: [ "BB-BO-01" ]
+    headers:
+      - name: Authorization
+        required: true
+        example: "Bearer {token}"
+      - name: Session-id
+        required: true
+        example: "{sessionId}"
+      - name: Request-id
+        required: true
+        example: "1"

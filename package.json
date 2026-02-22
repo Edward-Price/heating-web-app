@@ -1,0 +1,21 @@
+{
+  "name": "heating-web-app",
+  "private": true,
+  "version": "0.3.0",
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "build:web": "npm --prefix apps/web run build",
+    "dev:api": "node apps/api/src/server.js",
+    "dev:worker": "node apps/worker/src/worker.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}
