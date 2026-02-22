@@ -1,0 +1,10 @@
+node_modules
+apps/web/node_modules
+apps/api/node_modules
+apps/worker/node_modules
+**/dist
+.git
+.gitignore
+npm-debug.log*
+yarn-error.log*
+.DS_Store

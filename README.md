@@ -10,6 +10,24 @@ From project root:
 - `npm run dev:api` -> api on http://localhost:3001
 - `npm run dev:worker` -> worker loop (15-minute interval, immediate first tick)
 
+Web frontend in dev uses `/api` proxy to `http://localhost:3001`.
+
+## Docker (Local Server)
+
+From project root:
+
+1. Build and start:
+   - `docker compose up --build -d`
+2. Open:
+   - `http://localhost:8080`
+3. Stop:
+   - `docker compose down`
+
+Services:
+
+- `web` (nginx + built React app) on port `8080`
+- `api` (Node backend) internal port `3001` (proxied by `web` via `/api`)
+
 ## Structure
 
 - `apps/web` - browser UI starter

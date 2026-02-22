@@ -4,45 +4,8 @@ import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
 
-const API_BASE = 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
-const DIAL_START_ANGLE = 135;
-const DIAL_SWEEP_ANGLE = 270;
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function snapToHalfStep(value) {
-  return Math.round(value * 2) / 2;
-}
-
-function normalizeDeg(value) {
-  return ((value % 360) + 360) % 360;
-}
-
-function temperatureToAngle(value, min, max) {
-  const range = Math.max(max - min, 0.0001);
-  const ratio = clamp((value - min) / range, 0, 1);
-  return DIAL_START_ANGLE + ratio * DIAL_SWEEP_ANGLE;
-}
-
-function angleToTemperature(angleDeg, min, max) {
-  const start = normalizeDeg(DIAL_START_ANGLE);
-  const current = normalizeDeg(angleDeg);
-  const clockwiseDelta = (current - start + 360) % 360;
-  const clampedDelta = clamp(clockwiseDelta, 0, DIAL_SWEEP_ANGLE);
-  const ratio = clampedDelta / DIAL_SWEEP_ANGLE;
-  return min + ratio * (max - min);
-}
-
-function pointOnCircle(center, radius, angleDeg) {
-  const angle = (angleDeg * Math.PI) / 180;
-  return {
-    x: center + radius * Math.cos(angle),
-    y: center + radius * Math.sin(angle),
-  };
-}
 
 function zoneState(stateByDeviceId, id) {
   return stateByDeviceId[String(id)] || stateByDeviceId[id] || {};
@@ -80,7 +43,7 @@ export default function App() {
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
   const isLoadingRef = useRef(false);
-  const dialRef = useRef(null);
+  const dialPointerIdRef = useRef(null);
 
   const clearClientSession = useCallback((message = 'Session expired. Please sign in again.') => {
     setSessionToken('');
@@ -275,39 +238,55 @@ export default function App() {
     const knobRadius = 12;
     const trackStroke = 12;
     const ringTouchTolerance = 22;
-    const dialValue = clamp(snapToHalfStep(targetDraft), minTemp, maxTemp);
-    const dialAngle = temperatureToAngle(dialValue, minTemp, maxTemp);
-    const knob = pointOnCircle(center, radius, dialAngle);
-    const trackStart = pointOnCircle(center, radius, DIAL_START_ANGLE);
-    const trackEnd = pointOnCircle(center, radius, DIAL_START_ANGLE + DIAL_SWEEP_ANGLE);
-    const progressPath = `M ${trackStart.x} ${trackStart.y} A ${radius} ${radius} 0 ${
-      normalizeDeg(dialAngle - DIAL_START_ANGLE) > 180 ? 1 : 0
-    } 1 ${knob.x} ${knob.y}`;
-    const basePath = `M ${trackStart.x} ${trackStart.y} A ${radius} ${radius} 0 1 1 ${trackEnd.x} ${trackEnd.y}`;
-
-    const updateDialFromEvent = (event) => {
-      const element = dialRef.current;
-      if (!element) return;
-      const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const dx = x - center;
-      const dy = y - center;
-      const angleDeg = normalizeDeg((Math.atan2(dy, dx) * 180) / Math.PI);
-      const next = clamp(snapToHalfStep(angleToTemperature(angleDeg, minTemp, maxTemp)), minTemp, maxTemp);
-      setTargetDraft(next);
+    const startAngle = 135;
+    const sweepAngle = 270;
+    const ratio = Math.min(1, Math.max(0, (targetDraft - minTemp) / (maxTemp - minTemp)));
+    const dialAngle = startAngle + ratio * sweepAngle;
+    const toPoint = (angleDeg) => {
+      const angle = (angleDeg * Math.PI) / 180;
+      return {
+        x: center + radius * Math.cos(angle),
+        y: center + radius * Math.sin(angle),
+      };
+    };
+    const start = toPoint(startAngle);
+    const end = toPoint(startAngle + sweepAngle);
+    const knob = toPoint(dialAngle);
+    const largeArc = dialAngle - startAngle > 180 ? 1 : 0;
+    const basePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 1 1 ${end.x} ${end.y}`;
+    const activePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${knob.x} ${knob.y}`;
+    const stepTarget = (delta) => {
+      setTargetDraft((prev) => {
+        const next = Math.round((prev + delta) * 2) / 2;
+        return Math.max(minTemp, Math.min(maxTemp, next));
+      });
     };
 
-    const shouldStartDialDrag = (event) => {
-      const element = dialRef.current;
-      if (!element) return false;
+    const resolvePoint = (event, element) => {
       const rect = element.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       const dx = x - center;
       const dy = y - center;
       const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
+      const angleDeg = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+      return { distanceFromCenter, angleDeg };
+    };
+
+    const shouldStartDialDrag = (event, element) => {
+      const { distanceFromCenter } = resolvePoint(event, element);
       return Math.abs(distanceFromCenter - radius) <= trackStroke + ringTouchTolerance;
+    };
+
+    const updateDialFromPointer = (event, element) => {
+      const { angleDeg } = resolvePoint(event, element);
+      const start = ((startAngle % 360) + 360) % 360;
+      const clockwiseDelta = (angleDeg - start + 360) % 360;
+      const clampedDelta = Math.min(sweepAngle, Math.max(0, clockwiseDelta));
+      const ratio = clampedDelta / sweepAngle;
+      const next = minTemp + ratio * (maxTemp - minTemp);
+      const snapped = Math.round(next * 2) / 2;
+      setTargetDraft(Math.max(minTemp, Math.min(maxTemp, snapped)));
     };
 
     return (
@@ -337,15 +316,41 @@ export default function App() {
 
         <Card className="grid gap-4">
           <div className="flex flex-col items-center justify-center gap-3 py-2">
-            <div
-              ref={dialRef}
-              className="relative grid place-items-center select-none"
-              style={{ width: dialSize, height: dialSize, touchAction: 'auto' }}
-              onTouchMove={(event) => {
-                event.preventDefault();
-              }}
-            >
-              <svg width={dialSize} height={dialSize}>
+            <div className="relative grid place-items-center select-none" style={{ width: dialSize, height: dialSize }}>
+              <svg
+                width={dialSize}
+                height={dialSize}
+                style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
+                onPointerDown={(event) => {
+                  const element = event.currentTarget;
+                  if (!shouldStartDialDrag(event, element)) {
+                    return;
+                  }
+                  dialPointerIdRef.current = event.pointerId;
+                  updateDialFromPointer(event, element);
+                  element.setPointerCapture?.(event.pointerId);
+                }}
+                onPointerMove={(event) => {
+                  if (dialPointerIdRef.current !== event.pointerId) {
+                    return;
+                  }
+                  updateDialFromPointer(event, event.currentTarget);
+                }}
+                onPointerUp={(event) => {
+                  if (dialPointerIdRef.current !== event.pointerId) {
+                    return;
+                  }
+                  dialPointerIdRef.current = null;
+                  event.currentTarget.releasePointerCapture?.(event.pointerId);
+                }}
+                onPointerCancel={(event) => {
+                  if (dialPointerIdRef.current !== event.pointerId) {
+                    return;
+                  }
+                  dialPointerIdRef.current = null;
+                  event.currentTarget.releasePointerCapture?.(event.pointerId);
+                }}
+              >
                 <defs>
                   <linearGradient id="tempDialGradient" x1="0%" y1="0%" x2="100%" y2="0%">
                     <stop offset="0%" stopColor="#F6D365" />
@@ -353,37 +358,25 @@ export default function App() {
                     <stop offset="100%" stopColor="#E74C3C" />
                   </linearGradient>
                 </defs>
-
                 <path d={basePath} fill="none" stroke="#e6ebf1" strokeWidth={trackStroke} strokeLinecap="round" />
-                <path d={progressPath} fill="none" stroke="url(#tempDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
+                <path d={activePath} fill="none" stroke="url(#tempDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
                 <circle cx={knob.x} cy={knob.y} r={knobRadius} fill="#ffffff" stroke="#635bff" strokeWidth="3" />
               </svg>
-
               <div className="pointer-events-none absolute inset-0 grid place-items-center">
                 <div className="grid place-items-center gap-3 text-center">
                   <button
                     type="button"
                     className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setTargetDraft((prev) => clamp(snapToHalfStep(prev + 0.5), minTemp, maxTemp));
-                    }}
+                    onClick={() => stepTarget(0.5)}
                     aria-label="Increase target temperature"
                   >
                     +
                   </button>
-                  <div>
-                    <div className="text-5xl font-bold tracking-tight text-foreground">{dialValue.toFixed(1)}°</div>
-                  </div>
+                  <div className="text-5xl font-bold tracking-tight text-foreground">{targetDraft.toFixed(1)}°</div>
                   <button
                     type="button"
                     className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setTargetDraft((prev) => clamp(snapToHalfStep(prev - 0.5), minTemp, maxTemp));
-                    }}
+                    onClick={() => stepTarget(-0.5)}
                     aria-label="Decrease target temperature"
                   >
                     −
@@ -392,6 +385,7 @@ export default function App() {
               </div>
             </div>
           </div>
+
           <div className="flex justify-center">
             <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground">
               {heating ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}

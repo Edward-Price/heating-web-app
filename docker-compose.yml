@@ -1,0 +1,23 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: heating-api
+    environment:
+      API_PORT: 3001
+      PROVIDER_REST_BASE: https://app.beanbag.online/api/UserRestAPI
+      PROVIDER_WS_URL: wss://app.beanbag.online/api/TransactionRestAPI/ConnectWebSocket
+      PROVIDER_WS_PROTOCOL: BB-BO-01
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: heating-web
+    ports:
+      - "8090:80"
+    depends_on:
+      - api
+    restart: unless-stopped
