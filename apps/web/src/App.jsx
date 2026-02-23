@@ -45,13 +45,46 @@ function createStatsConfig(range = 'day') {
   };
 }
 
-function buildSeriesPath(points, width, height, getValue, minY, maxY) {
+function getStatsDomainBounds(config, fallbackPoints = []) {
+  if (!config || !config.anchor) {
+    if (fallbackPoints.length) {
+      const first = Number(fallbackPoints[0].ts);
+      const last = Number(fallbackPoints[fallbackPoints.length - 1].ts);
+      return {
+        startTs: Number.isFinite(first) ? first : Date.now(),
+        endTs: Number.isFinite(last) && last > first ? last : (Number.isFinite(first) ? first + 1 : Date.now() + 1),
+      };
+    }
+    const now = Date.now();
+    return { startTs: now - DAY_MS, endTs: now };
+  }
+
+  if (config.range === 'month') {
+    const [yRaw, mRaw] = String(config.anchor).split('-').map((n) => Number(n));
+    const year = Number.isFinite(yRaw) ? yRaw : new Date().getUTCFullYear();
+    const month = Number.isFinite(mRaw) ? mRaw : new Date().getUTCMonth() + 1;
+    const startTs = Date.UTC(year, month - 1, 1, 0, 0, 0, 0);
+    const endTs = Date.UTC(year, month, 1, 0, 0, 0, 0) - 1;
+    return { startTs, endTs };
+  }
+
+  const startTs = Date.parse(`${config.anchor}T00:00:00.000Z`);
+  const endTs = Date.parse(`${config.anchor}T23:59:59.999Z`);
+  if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
+    return { startTs, endTs };
+  }
+
+  const now = Date.now();
+  return { startTs: now - DAY_MS, endTs: now };
+}
+
+function buildSeriesPath(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs) {
   if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY) || minY === maxY) {
     return '';
   }
 
-  const firstTs = Number(points[0].ts);
-  const lastTs = Number(points[points.length - 1].ts);
+  const firstTs = Number.isFinite(domainStartTs) ? Number(domainStartTs) : Number(points[0].ts);
+  const lastTs = Number.isFinite(domainEndTs) ? Number(domainEndTs) : Number(points[points.length - 1].ts);
   const spanTs = Math.max(1, lastTs - firstTs);
   const innerW = width - 24;
   const innerH = height - 4;
@@ -61,22 +94,24 @@ function buildSeriesPath(points, width, height, getValue, minY, maxY) {
   let path = '';
   for (let i = 0; i < points.length; i += 1) {
     const p = points[i];
+    const pointTs = Number(p.ts);
+    if (!Number.isFinite(pointTs) || pointTs < firstTs || pointTs > lastTs) continue;
     const value = getValue(p);
     if (!Number.isFinite(value)) continue;
-    const x = leftPad + ((Number(p.ts) - firstTs) / spanTs) * innerW;
+    const x = leftPad + ((pointTs - firstTs) / spanTs) * innerW;
     const y = topPad + (1 - (value - minY) / (maxY - minY)) * innerH;
     path += path ? ` L ${x} ${y}` : `M ${x} ${y}`;
   }
   return path;
 }
 
-function buildSeriesCoordinates(points, width, height, getValue, minY, maxY) {
+function buildSeriesCoordinates(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs) {
   if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
     return [];
   }
 
-  const firstTs = Number(points[0].ts);
-  const lastTs = Number(points[points.length - 1].ts);
+  const firstTs = Number.isFinite(domainStartTs) ? Number(domainStartTs) : Number(points[0].ts);
+  const lastTs = Number.isFinite(domainEndTs) ? Number(domainEndTs) : Number(points[points.length - 1].ts);
   const spanTs = Math.max(1, lastTs - firstTs);
   const innerW = width - 24;
   const innerH = height - 4;
@@ -87,9 +122,11 @@ function buildSeriesCoordinates(points, width, height, getValue, minY, maxY) {
   const coords = [];
   for (let i = 0; i < points.length; i += 1) {
     const p = points[i];
+    const pointTs = Number(p.ts);
+    if (!Number.isFinite(pointTs) || pointTs < firstTs || pointTs > lastTs) continue;
     const value = getValue(p);
     if (!Number.isFinite(value)) continue;
-    const x = leftPad + ((Number(p.ts) - firstTs) / spanTs) * innerW;
+    const x = leftPad + ((pointTs - firstTs) / spanTs) * innerW;
     const y = topPad + (1 - (value - minY) / ySpan) * innerH;
     coords.push({ x, y, value });
   }
@@ -682,6 +719,7 @@ export default function App() {
       return;
     }
 
+    event.preventDefault();
     setPullDistance(Math.min(84, delta * 0.45));
   }, []);
 
@@ -715,6 +753,7 @@ export default function App() {
       setStatsPullDistance(0);
       return;
     }
+    event.preventDefault();
     setStatsPullDistance(Math.min(84, delta * 0.45));
   }, []);
 
@@ -783,7 +822,7 @@ export default function App() {
 
       return (
         <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-          <header className="mb-3 shrink-0">
+          <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
             <div className="mb-1 flex items-center justify-between">
               <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
             </div>
@@ -791,7 +830,7 @@ export default function App() {
 
           <div
             ref={statsContentRef}
-            className="min-h-0 flex-1 overflow-y-auto"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
             onTouchStart={onStatsTouchStart}
             onTouchMove={onStatsTouchMove}
             onTouchEnd={onStatsTouchEnd}
@@ -871,21 +910,58 @@ export default function App() {
                 const graphGridBottomY = graphH - 2;
                 const graphCrosshairTopY = 2;
                 const graphCrosshairBottomY = graphH - 2;
-                const currentPath = buildSeriesPath(points, graphW, graphH, (p) => p.currentTemp, minVal, maxVal);
-                const targetPath = buildSeriesPath(points, graphW, graphH, (p) => p.targetTemp, minVal, maxVal);
-                const currentCoords = buildSeriesCoordinates(points, graphW, graphH, (p) => p.currentTemp, minVal, maxVal);
-                const targetCoords = buildSeriesCoordinates(points, graphW, graphH, (p) => p.targetTemp, minVal, maxVal);
+                const { startTs: domainStartTs, endTs: domainEndTs } = getStatsDomainBounds(config, points);
+                const currentPath = buildSeriesPath(
+                  points,
+                  graphW,
+                  graphH,
+                  (p) => p.currentTemp,
+                  minVal,
+                  maxVal,
+                  domainStartTs,
+                  domainEndTs
+                );
+                const targetPath = buildSeriesPath(
+                  points,
+                  graphW,
+                  graphH,
+                  (p) => p.targetTemp,
+                  minVal,
+                  maxVal,
+                  domainStartTs,
+                  domainEndTs
+                );
+                const currentCoords = buildSeriesCoordinates(
+                  points,
+                  graphW,
+                  graphH,
+                  (p) => p.currentTemp,
+                  minVal,
+                  maxVal,
+                  domainStartTs,
+                  domainEndTs
+                );
+                const targetCoords = buildSeriesCoordinates(
+                  points,
+                  graphW,
+                  graphH,
+                  (p) => p.targetTemp,
+                  minVal,
+                  maxVal,
+                  domainStartTs,
+                  domainEndTs
+                );
                 const hoverIdxRaw = statsHoverByZone[key];
                 const hoverIdx = Number.isInteger(hoverIdxRaw) ? hoverIdxRaw : null;
                 const hoveredPoint = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < points.length ? points[hoverIdx] : null;
                 const graphLeftPad = 12;
                 const graphInnerWidth = graphW - 24;
-                const firstTs = points.length ? Number(points[0].ts) : 0;
-                const lastTs = points.length ? Number(points[points.length - 1].ts) : 0;
+                const firstTs = domainStartTs;
+                const lastTs = domainEndTs;
                 const midTs = firstTs + Math.max(0, lastTs - firstTs) / 2;
                 const tsSpan = Math.max(1, lastTs - firstTs);
                 const hoverX =
-                  hoveredPoint
+                  hoveredPoint && Number(hoveredPoint.ts) >= firstTs && Number(hoveredPoint.ts) <= lastTs
                     ? graphLeftPad + ((Number(hoveredPoint.ts) - firstTs) / tsSpan) * graphInnerWidth
                     : null;
 
@@ -917,80 +993,94 @@ export default function App() {
                     </div>
 
                     <div className="rounded-md bg-slate-50 px-2 py-1 dark:bg-slate-900">
-                      <div
-                        onMouseMove={(event) =>
-                          setStatsHoverFromClientX(zone.id, points, event.clientX, event.currentTarget.getBoundingClientRect())
-                        }
-                        onMouseLeave={() => clearStatsHover(zone.id)}
-                        onTouchStart={(event) => {
-                          event.stopPropagation();
-                          const touch = event.touches[0];
-                          if (!touch) return;
-                          setStatsHoverFromClientX(
-                            zone.id,
-                            points,
-                            touch.clientX,
-                            event.currentTarget.getBoundingClientRect()
-                          );
-                        }}
-                        onTouchMove={(event) => {
-                          event.stopPropagation();
-                          const touch = event.touches[0];
-                          if (!touch) return;
-                          setStatsHoverFromClientX(
-                            zone.id,
-                            points,
-                            touch.clientX,
-                            event.currentTarget.getBoundingClientRect()
-                          );
-                        }}
-                        onTouchEnd={() => clearStatsHover(zone.id)}
-                        onTouchCancel={() => clearStatsHover(zone.id)}
-                      >
-                      <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-56 w-full text-slate-700 dark:text-slate-200">
-                        <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
-                        <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
-                        <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
-                        {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
-                        {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
-                        {targetCoords.map((pt, idx) => (
-                          <circle key={`target-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#8b5cf6" />
-                        ))}
-                        {currentCoords.map((pt, idx) => (
-                          <circle key={`current-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#06b6d4" />
-                        ))}
-                        {hoverX !== null ? (
-                          <line
-                            x1={hoverX}
-                            y1={graphCrosshairTopY}
-                            x2={hoverX}
-                            y2={graphCrosshairBottomY}
-                            stroke="rgba(100,116,139,0.8)"
-                            strokeWidth="1.5"
-                            strokeDasharray="3 3"
-                          />
-                        ) : null}
-                        {hoveredPoint && Number.isFinite(hoveredPoint.targetTemp) ? (
-                          <circle
-                            cx={hoverX}
-                            cy={2 + (1 - (hoveredPoint.targetTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
-                            r="4.5"
-                            fill="#8b5cf6"
-                            stroke="white"
-                            strokeWidth="1.5"
-                          />
-                        ) : null}
-                        {hoveredPoint && Number.isFinite(hoveredPoint.currentTemp) ? (
-                          <circle
-                            cx={hoverX}
-                            cy={2 + (1 - (hoveredPoint.currentTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
-                            r="4.5"
-                            fill="#06b6d4"
-                            stroke="white"
-                            strokeWidth="1.5"
-                          />
-                        ) : null}
-                      </svg>
+                      <div className="grid grid-cols-[auto,1fr] gap-x-2">
+                        <div className="flex h-56 flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
+                          <span>{`${maxVal.toFixed(1)}°`}</span>
+                          <span>{`${center.toFixed(1)}°`}</span>
+                          <span>{`${minVal.toFixed(1)}°`}</span>
+                        </div>
+                        <div>
+                          <div
+                            onMouseMove={(event) =>
+                              setStatsHoverFromClientX(zone.id, points, event.clientX, event.currentTarget.getBoundingClientRect())
+                            }
+                            onMouseLeave={() => clearStatsHover(zone.id)}
+                            onTouchStart={(event) => {
+                              event.stopPropagation();
+                              const touch = event.touches[0];
+                              if (!touch) return;
+                              setStatsHoverFromClientX(
+                                zone.id,
+                                points,
+                                touch.clientX,
+                                event.currentTarget.getBoundingClientRect()
+                              );
+                            }}
+                            onTouchMove={(event) => {
+                              event.stopPropagation();
+                              const touch = event.touches[0];
+                              if (!touch) return;
+                              setStatsHoverFromClientX(
+                                zone.id,
+                                points,
+                                touch.clientX,
+                                event.currentTarget.getBoundingClientRect()
+                              );
+                            }}
+                            onTouchEnd={() => clearStatsHover(zone.id)}
+                            onTouchCancel={() => clearStatsHover(zone.id)}
+                          >
+                            <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-56 w-full text-slate-700 dark:text-slate-200">
+                              <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+                              <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
+                              <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+                              {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
+                              {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
+                              {targetCoords.map((pt, idx) => (
+                                <circle key={`target-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#8b5cf6" />
+                              ))}
+                              {currentCoords.map((pt, idx) => (
+                                <circle key={`current-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#06b6d4" />
+                              ))}
+                              {hoverX !== null ? (
+                                <line
+                                  x1={hoverX}
+                                  y1={graphCrosshairTopY}
+                                  x2={hoverX}
+                                  y2={graphCrosshairBottomY}
+                                  stroke="rgba(100,116,139,0.8)"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="3 3"
+                                />
+                              ) : null}
+                              {hoveredPoint && Number.isFinite(hoveredPoint.targetTemp) ? (
+                                <circle
+                                  cx={hoverX}
+                                  cy={2 + (1 - (hoveredPoint.targetTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
+                                  r="4.5"
+                                  fill="#8b5cf6"
+                                  stroke="white"
+                                  strokeWidth="1.5"
+                                />
+                              ) : null}
+                              {hoveredPoint && Number.isFinite(hoveredPoint.currentTemp) ? (
+                                <circle
+                                  cx={hoverX}
+                                  cy={2 + (1 - (hoveredPoint.currentTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
+                                  r="4.5"
+                                  fill="#06b6d4"
+                                  stroke="white"
+                                  strokeWidth="1.5"
+                                />
+                              ) : null}
+                            </svg>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>{formatStatsAxisLabel(firstTs, config.range)}</span>
+                            <span>{formatStatsAxisLabel(midTs, config.range)}</span>
+                            <span>{formatStatsAxisLabel(lastTs, config.range)}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1055,7 +1145,7 @@ export default function App() {
 
     return (
       <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-        <header className="mb-3 shrink-0">
+        <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
           <div className="mb-1 flex items-center justify-between">
             <Button
               size="icon"
@@ -1078,7 +1168,7 @@ export default function App() {
           </div>
         </header>
 
-        <div ref={scheduleScrollerRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={scheduleScrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
           {scheduleZoneId === null ? (
             <section className="grid gap-3">
               {scheduleDevices.map((zone) => (
@@ -1523,7 +1613,7 @@ export default function App() {
 
   return (
     <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-      <header className="mb-3 shrink-0">
+      <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
         <div className="mb-1 flex items-center justify-between">
           <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
           <div className="flex items-center gap-2 text-sm text-muted">
@@ -1535,7 +1625,7 @@ export default function App() {
 
       <div
         ref={contentRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
         onTouchStart={onContentTouchStart}
         onTouchMove={onContentTouchMove}
         onTouchEnd={onContentTouchEnd}
