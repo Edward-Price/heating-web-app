@@ -133,6 +133,21 @@ function buildSeriesCoordinates(points, width, height, getValue, minY, maxY, dom
   return coords;
 }
 
+function buildSeriesAreaPath(coords, baselineY) {
+  if (!Array.isArray(coords) || coords.length < 2) return '';
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  if (!first || !last) return '';
+
+  let path = `M ${first.x} ${baselineY} L ${first.x} ${first.y}`;
+  for (let i = 1; i < coords.length; i += 1) {
+    const pt = coords[i];
+    path += ` L ${pt.x} ${pt.y}`;
+  }
+  path += ` L ${last.x} ${baselineY} Z`;
+  return path;
+}
+
 function formatStatsTimestamp(ts, range) {
   const date = new Date(Number(ts));
   if (Number.isNaN(date.getTime())) return '--';
@@ -910,6 +925,7 @@ export default function App() {
                 const graphGridBottomY = graphH - 2;
                 const graphCrosshairTopY = 2;
                 const graphCrosshairBottomY = graphH - 2;
+                const graphAreaBaselineY = graphH - 2;
                 const { startTs: domainStartTs, endTs: domainEndTs } = getStatsDomainBounds(config, points);
                 const currentPath = buildSeriesPath(
                   points,
@@ -951,6 +967,8 @@ export default function App() {
                   domainStartTs,
                   domainEndTs
                 );
+                const currentAreaPath = buildSeriesAreaPath(currentCoords, graphAreaBaselineY);
+                const targetAreaPath = buildSeriesAreaPath(targetCoords, graphAreaBaselineY);
                 const hoverIdxRaw = statsHoverByZone[key];
                 const hoverIdx = Number.isInteger(hoverIdxRaw) ? hoverIdxRaw : null;
                 const hoveredPoint = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < points.length ? points[hoverIdx] : null;
@@ -1034,6 +1052,8 @@ export default function App() {
                               <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
                               <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
                               <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
+                              {targetAreaPath ? <path d={targetAreaPath} fill="rgba(139,92,246,0.2)" stroke="none" /> : null}
+                              {currentAreaPath ? <path d={currentAreaPath} fill="rgba(6,182,212,0.2)" stroke="none" /> : null}
                               {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
                               {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
                               {targetCoords.map((pt, idx) => (

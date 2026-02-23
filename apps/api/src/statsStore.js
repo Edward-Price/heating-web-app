@@ -159,6 +159,55 @@ const readRangeStmt = db.prepare(`
   ORDER BY ts ASC
 `);
 
+function buildDummyRowsForRange({ zoneId, range, from, to }) {
+  const safeZoneId = Number(zoneId);
+  if (!Number.isFinite(safeZoneId) || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+    return [];
+  }
+
+  const now = Date.now();
+  const upperBound = Math.min(to - 1, now);
+  if (upperBound < from) return [];
+
+  const rows = [];
+  if (range === 'month') {
+    for (let ts = from + 12 * 60 * 60 * 1000; ts <= upperBound; ts += DAY_MS) {
+      const d = new Date(ts);
+      const day = d.getUTCDate();
+      const target = 20 + (safeZoneId % 4) * 0.3 + ((day % 6) - 3) * 0.12;
+      const current = target + Math.sin(day / 2 + safeZoneId) * 0.5;
+      rows.push({
+        ts,
+        collected_at: new Date(ts).toISOString(),
+        device_id: safeZoneId,
+        name: `Zone ${safeZoneId}`,
+        type: 'zone',
+        current_temp: Number(current.toFixed(2)),
+        target_temp: Number(target.toFixed(2)),
+      });
+    }
+    return rows;
+  }
+
+  for (let ts = from; ts <= upperBound; ts += 60 * 60 * 1000) {
+    const d = new Date(ts);
+    const hour = d.getUTCHours() + d.getUTCMinutes() / 60;
+    const dailyWave = Math.sin((hour / 24) * Math.PI * 2 - Math.PI / 2);
+    const target = 19.5 + (safeZoneId % 4) * 0.35 + dailyWave * 1.2;
+    const current = target + Math.sin((hour / 24) * Math.PI * 4 + safeZoneId) * 0.35;
+    rows.push({
+      ts,
+      collected_at: new Date(ts).toISOString(),
+      device_id: safeZoneId,
+      name: `Zone ${safeZoneId}`,
+      type: 'zone',
+      current_temp: Number(current.toFixed(2)),
+      target_temp: Number(target.toFixed(2)),
+    });
+  }
+  return rows;
+}
+
 function queryZoneSeries({ zoneId, range = 'day', anchor }) {
   const id = Number(zoneId);
   if (!Number.isFinite(id)) {
@@ -183,7 +232,14 @@ function queryZoneSeries({ zoneId, range = 'day', anchor }) {
     to = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
   }
 
-  const rows = readRangeStmt.all(id, from, to);
+  const dbRows = readRangeStmt.all(id, from, to);
+  const rows = dbRows.length
+    ? dbRows
+    : buildDummyRowsForRange({ zoneId: id, range, from, to }).map((row) => ({
+        ts: row.ts,
+        currentTemp: row.current_temp,
+        targetTemp: row.target_temp,
+      }));
 
   let points = rows.map((row) => ({
     timestamp: new Date(Number(row.ts)).toISOString(),
