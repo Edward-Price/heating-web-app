@@ -659,21 +659,34 @@ export default function App() {
     ];
 
     return (
-      <nav className="shrink-0 border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
-        <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 py-2">
+      <nav className="shrink-0 overflow-visible border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
+        <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 pb-2 pt-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const selected = activeTab === tab.key;
+            const isHomeTab = tab.key === 'home';
             return (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => onSelectTab(tab.key)}
-                className="flex flex-col items-center justify-center gap-1 py-1"
+                className={isHomeTab ? 'relative -mt-5 flex flex-col items-center justify-center gap-1 py-1' : 'flex flex-col items-center justify-center gap-1 py-1'}
                 aria-label={tab.label}
                 aria-current={selected ? 'page' : undefined}
               >
-                <Icon className={selected ? 'h-5 w-5 text-foreground' : 'h-5 w-5 text-slate-400'} />
+                {isHomeTab ? (
+                  <span
+                    className={
+                      selected
+                        ? 'grid h-14 w-14 place-items-center rounded-full border border-border bg-foreground text-white shadow-lg shadow-slate-900/20 dark:border-slate-600 dark:bg-slate-100 dark:text-slate-900'
+                        : 'grid h-14 w-14 place-items-center rounded-full border border-border bg-white text-slate-500 shadow-md shadow-slate-900/10 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                    }
+                  >
+                    <Icon className="h-6 w-6" />
+                  </span>
+                ) : (
+                  <Icon className={selected ? 'h-5 w-5 text-foreground' : 'h-5 w-5 text-slate-400'} />
+                )}
                 <span className={selected ? 'text-xs font-semibold text-foreground' : 'text-xs font-medium text-slate-400'}>
                   {tab.label}
                 </span>
@@ -781,16 +794,22 @@ export default function App() {
     }
   }, [statsPullDistance, runStatsPullRefresh]);
 
-  const setStatsHoverFromClientX = useCallback((zoneId, points, clientX, bounds) => {
+  const setStatsHoverFromClientX = useCallback((zoneId, points, clientX, bounds, domainStartTs, domainEndTs) => {
     if (!Array.isArray(points) || points.length === 0 || !bounds || bounds.width <= 0) {
       setStatsHoverByZone((prev) => ({ ...prev, [String(zoneId)]: null }));
       return;
     }
 
-    const firstTs = Number(points[0].ts);
-    const lastTs = Number(points[points.length - 1].ts);
+    const firstTs = Number.isFinite(Number(domainStartTs)) ? Number(domainStartTs) : Number(points[0].ts);
+    const lastTs = Number.isFinite(Number(domainEndTs)) ? Number(domainEndTs) : Number(points[points.length - 1].ts);
+    const firstDataTs = Number(points[0].ts);
+    const lastDataTs = Number(points[points.length - 1].ts);
     const clampedRatio = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
     const targetTs = firstTs + (lastTs - firstTs) * clampedRatio;
+    if (targetTs < firstDataTs || targetTs > lastDataTs) {
+      setStatsHoverByZone((prev) => ({ ...prev, [String(zoneId)]: null }));
+      return;
+    }
 
     let closestIdx = 0;
     let closestDiff = Infinity;
@@ -811,7 +830,7 @@ export default function App() {
 
   if (!loggedIn) {
     return (
-      <main className="mx-auto max-w-5xl p-4 pb-24 md:p-8">
+      <main className="mx-auto h-[100dvh] max-w-5xl overflow-y-auto p-4 pb-24 md:p-8">
         <header className="mb-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold">Heating Web App</h1>
         </header>
@@ -908,16 +927,13 @@ export default function App() {
                   .flatMap((p) => [p.currentTemp, p.targetTemp])
                   .filter((n) => Number.isFinite(n));
                 const saneValues = values.filter((v) => v >= 5 && v <= 35);
-                const sortedValues = (saneValues.length ? saneValues : values).slice().sort((a, b) => a - b);
-                const trimmedValues =
-                  sortedValues.length >= 6 ? sortedValues.slice(1, sortedValues.length - 1) : sortedValues;
-                const valueMin = trimmedValues.length ? Math.min(...trimmedValues) : 18;
-                const valueMax = trimmedValues.length ? Math.max(...trimmedValues) : 22;
-                const rawSpan = Math.max(0.05, valueMax - valueMin);
-                const paddedSpan = Math.max(0.25, rawSpan * 1.01);
-                const center = (valueMin + valueMax) / 2;
-                const minVal = center - paddedSpan / 2;
-                const maxVal = center + paddedSpan / 2;
+                const chartValues = saneValues.length ? saneValues : values;
+                const valueMin = chartValues.length ? Math.min(...chartValues) : 18;
+                const valueMax = chartValues.length ? Math.max(...chartValues) : 22;
+                const span = valueMax - valueMin;
+                const minVal = span < 0.05 ? valueMin - 0.1 : valueMin;
+                const maxVal = span < 0.05 ? valueMax + 0.1 : valueMax;
+                const center = (minVal + maxVal) / 2;
                 const graphW = 720;
                 const graphH = 220;
                 const graphGridTopY = 2;
@@ -985,9 +1001,9 @@ export default function App() {
 
                 return (
                   <Card key={zone.id} className="overflow-hidden">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="mb-3 grid gap-2">
                       <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="inline-flex rounded-md border border-border p-0.5">
                           <button
                             type="button"
@@ -1011,16 +1027,25 @@ export default function App() {
                     </div>
 
                     <div className="rounded-md bg-slate-50 px-2 py-1 dark:bg-slate-900">
-                      <div className="grid grid-cols-[auto,1fr] gap-x-2">
-                        <div className="flex h-56 flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      <div className="grid grid-cols-[auto,1fr] items-stretch gap-x-2">
+                        <div className="flex h-full flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
                           <span>{`${maxVal.toFixed(1)}°`}</span>
                           <span>{`${center.toFixed(1)}°`}</span>
                           <span>{`${minVal.toFixed(1)}°`}</span>
                         </div>
                         <div>
                           <div
+                            className="w-full"
+                            style={{ aspectRatio: `${graphW} / ${graphH}` }}
                             onMouseMove={(event) =>
-                              setStatsHoverFromClientX(zone.id, points, event.clientX, event.currentTarget.getBoundingClientRect())
+                              setStatsHoverFromClientX(
+                                zone.id,
+                                points,
+                                event.clientX,
+                                event.currentTarget.getBoundingClientRect(),
+                                domainStartTs,
+                                domainEndTs
+                              )
                             }
                             onMouseLeave={() => clearStatsHover(zone.id)}
                             onTouchStart={(event) => {
@@ -1031,7 +1056,9 @@ export default function App() {
                                 zone.id,
                                 points,
                                 touch.clientX,
-                                event.currentTarget.getBoundingClientRect()
+                                event.currentTarget.getBoundingClientRect(),
+                                domainStartTs,
+                                domainEndTs
                               );
                             }}
                             onTouchMove={(event) => {
@@ -1042,13 +1069,15 @@ export default function App() {
                                 zone.id,
                                 points,
                                 touch.clientX,
-                                event.currentTarget.getBoundingClientRect()
+                                event.currentTarget.getBoundingClientRect(),
+                                domainStartTs,
+                                domainEndTs
                               );
                             }}
                             onTouchEnd={() => clearStatsHover(zone.id)}
                             onTouchCancel={() => clearStatsHover(zone.id)}
                           >
-                            <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-56 w-full text-slate-700 dark:text-slate-200">
+                            <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-full w-full text-slate-700 dark:text-slate-200">
                               <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
                               <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
                               <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
@@ -1609,7 +1638,7 @@ export default function App() {
             type="button"
             onClick={() => writeTarget(zone.id, targetDraft)}
             disabled={!hasChange}
-            className="h-12 w-full rounded-full bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-12 w-full rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {status.toLowerCase().includes('setting') ? 'Setting...' : 'Set temperature'}
           </button>
@@ -1728,7 +1757,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="rounded-full bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
+                    <div className="rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
                       {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
                     </div>
                     <div className="flex items-center gap-1.5 text-sm text-muted">
@@ -1756,8 +1785,18 @@ export default function App() {
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                <Button onClick={() => writeHotWater(hotWater.id, 60)}>Boost 1h</Button>
-                <Button onClick={() => writeHotWater(hotWater.id, 120)}>Boost 2h</Button>
+                <Button
+                  onClick={() => writeHotWater(hotWater.id, 60)}
+                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
+                >
+                  Boost 1h
+                </Button>
+                <Button
+                  onClick={() => writeHotWater(hotWater.id, 120)}
+                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
+                >
+                  Boost 2h
+                </Button>
                 <Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button>
               </div>
             </Card>

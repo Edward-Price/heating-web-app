@@ -5,6 +5,7 @@ const Database = require('better-sqlite3');
 const DEFAULT_DB_PATH = path.resolve(__dirname, '../../data/stats.sqlite');
 const LEGACY_JSONL_PATH = path.resolve(__dirname, '../../data/stats.jsonl');
 const DB_PATH = process.env.STATS_DB_PATH || DEFAULT_DB_PATH;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function ensureDbDir() {
   const dir = path.dirname(DB_PATH);
