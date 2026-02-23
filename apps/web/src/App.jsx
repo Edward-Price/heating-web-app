@@ -1,239 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, ChevronUp, Flame, House, Menu, Moon, Snowflake, Sun, X } from 'lucide-react';
+import { BarChart3, CalendarDays, House } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
+import HomeScreen from './screens/HomeScreen';
+import StatsScreen from './screens/StatsScreen';
+import ScheduleScreen from './screens/ScheduleScreen';
+import { zoneState, formatTemperature, mapConnectionStatus } from './lib/deviceUtils';
+import {
+  createStatsConfig,
+  shiftAnchor,
+  getStatsDomainBounds,
+  buildSeriesPath,
+  buildSeriesCoordinates,
+  buildSeriesAreaPath,
+  formatStatsTimestamp,
+  formatStatsAxisLabel,
+} from './lib/statsUtils';
+import {
+  WEEK_DAYS,
+  createEmptyWeekSchedule,
+  formatHour,
+  isBinaryScheduleDevice,
+  formatScheduleValue,
+  getTempScaleColor,
+} from './lib/scheduleUtils';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
 const THEME_STORAGE_KEY = 'heating-web-theme';
-const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const DAY_MS = 24 * 60 * 60 * 1000;
 const SCHEDULE_COLORS = [
   { bg: 'bg-sky-50', text: 'text-sky-700', bar: 'bg-sky-400', chip: 'bg-sky-500' },
   { bg: 'bg-orange-50', text: 'text-orange-700', bar: 'bg-orange-400', chip: 'bg-orange-500' },
   { bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-400', chip: 'bg-emerald-500' },
   { bg: 'bg-violet-50', text: 'text-violet-700', bar: 'bg-violet-400', chip: 'bg-violet-500' },
 ];
-
-function formatDayAnchor(dateLike) {
-  return new Date(dateLike).toISOString().slice(0, 10);
-}
-
-function formatMonthAnchor(dateLike) {
-  return new Date(dateLike).toISOString().slice(0, 7);
-}
-
-function shiftAnchor(anchor, range, delta) {
-  if (range === 'month') {
-    const [y, m] = String(anchor).split('-').map((n) => Number(n));
-    const base = new Date(Date.UTC(Number.isFinite(y) ? y : new Date().getUTCFullYear(), (Number.isFinite(m) ? m : 1) - 1, 1));
-    base.setUTCMonth(base.getUTCMonth() + delta);
-    return formatMonthAnchor(base);
-  }
-
-  const base = new Date(`${anchor}T00:00:00.000Z`);
-  base.setUTCDate(base.getUTCDate() + delta);
-  return formatDayAnchor(base);
-}
-
-function createStatsConfig(range = 'day') {
-  const now = new Date();
-  return {
-    range,
-    anchor: range === 'month' ? formatMonthAnchor(now) : formatDayAnchor(now),
-  };
-}
-
-function getStatsDomainBounds(config, fallbackPoints = []) {
-  if (!config || !config.anchor) {
-    if (fallbackPoints.length) {
-      const first = Number(fallbackPoints[0].ts);
-      const last = Number(fallbackPoints[fallbackPoints.length - 1].ts);
-      return {
-        startTs: Number.isFinite(first) ? first : Date.now(),
-        endTs: Number.isFinite(last) && last > first ? last : (Number.isFinite(first) ? first + 1 : Date.now() + 1),
-      };
-    }
-    const now = Date.now();
-    return { startTs: now - DAY_MS, endTs: now };
-  }
-
-  if (config.range === 'month') {
-    const [yRaw, mRaw] = String(config.anchor).split('-').map((n) => Number(n));
-    const year = Number.isFinite(yRaw) ? yRaw : new Date().getUTCFullYear();
-    const month = Number.isFinite(mRaw) ? mRaw : new Date().getUTCMonth() + 1;
-    const startTs = Date.UTC(year, month - 1, 1, 0, 0, 0, 0);
-    const endTs = Date.UTC(year, month, 1, 0, 0, 0, 0) - 1;
-    return { startTs, endTs };
-  }
-
-  const startTs = Date.parse(`${config.anchor}T00:00:00.000Z`);
-  const endTs = Date.parse(`${config.anchor}T23:59:59.999Z`);
-  if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
-    return { startTs, endTs };
-  }
-
-  const now = Date.now();
-  return { startTs: now - DAY_MS, endTs: now };
-}
-
-function buildSeriesPath(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs) {
-  if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY) || minY === maxY) {
-    return '';
-  }
-
-  const firstTs = Number.isFinite(domainStartTs) ? Number(domainStartTs) : Number(points[0].ts);
-  const lastTs = Number.isFinite(domainEndTs) ? Number(domainEndTs) : Number(points[points.length - 1].ts);
-  const spanTs = Math.max(1, lastTs - firstTs);
-  const innerW = width - 24;
-  const innerH = height - 4;
-  const topPad = 2;
-  const leftPad = 12;
-
-  let path = '';
-  for (let i = 0; i < points.length; i += 1) {
-    const p = points[i];
-    const pointTs = Number(p.ts);
-    if (!Number.isFinite(pointTs) || pointTs < firstTs || pointTs > lastTs) continue;
-    const value = getValue(p);
-    if (!Number.isFinite(value)) continue;
-    const x = leftPad + ((pointTs - firstTs) / spanTs) * innerW;
-    const y = topPad + (1 - (value - minY) / (maxY - minY)) * innerH;
-    path += path ? ` L ${x} ${y}` : `M ${x} ${y}`;
-  }
-  return path;
-}
-
-function buildSeriesCoordinates(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs) {
-  if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
-    return [];
-  }
-
-  const firstTs = Number.isFinite(domainStartTs) ? Number(domainStartTs) : Number(points[0].ts);
-  const lastTs = Number.isFinite(domainEndTs) ? Number(domainEndTs) : Number(points[points.length - 1].ts);
-  const spanTs = Math.max(1, lastTs - firstTs);
-  const innerW = width - 24;
-  const innerH = height - 4;
-  const topPad = 2;
-  const leftPad = 12;
-  const ySpan = Math.max(0.01, maxY - minY);
-
-  const coords = [];
-  for (let i = 0; i < points.length; i += 1) {
-    const p = points[i];
-    const pointTs = Number(p.ts);
-    if (!Number.isFinite(pointTs) || pointTs < firstTs || pointTs > lastTs) continue;
-    const value = getValue(p);
-    if (!Number.isFinite(value)) continue;
-    const x = leftPad + ((pointTs - firstTs) / spanTs) * innerW;
-    const y = topPad + (1 - (value - minY) / ySpan) * innerH;
-    coords.push({ x, y, value });
-  }
-  return coords;
-}
-
-function buildSeriesAreaPath(coords, baselineY) {
-  if (!Array.isArray(coords) || coords.length < 2) return '';
-  const first = coords[0];
-  const last = coords[coords.length - 1];
-  if (!first || !last) return '';
-
-  let path = `M ${first.x} ${baselineY} L ${first.x} ${first.y}`;
-  for (let i = 1; i < coords.length; i += 1) {
-    const pt = coords[i];
-    path += ` L ${pt.x} ${pt.y}`;
-  }
-  path += ` L ${last.x} ${baselineY} Z`;
-  return path;
-}
-
-function formatStatsTimestamp(ts, range) {
-  const date = new Date(Number(ts));
-  if (Number.isNaN(date.getTime())) return '--';
-  if (range === 'month') {
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  }
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatStatsAxisLabel(ts, range) {
-  const date = new Date(Number(ts));
-  if (Number.isNaN(date.getTime())) return '--';
-  if (range === 'month') {
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function createDefaultDayPeriods() {
-  return [
-    { start: 0, end: 4, temp: 16, colorIndex: 0 },
-    { start: 4, end: 7, temp: 18, colorIndex: 1 },
-    { start: 7, end: 10, temp: 20.5, colorIndex: 2 },
-    { start: 10, end: 15, temp: 21.5, colorIndex: 3 },
-    { start: 15, end: 20, temp: 19, colorIndex: 1 },
-    { start: 20, end: 24, temp: 17, colorIndex: 0 },
-  ];
-}
-
-function createDefaultWeekSchedule() {
-  return WEEK_DAYS.map((day) => ({ day, periods: createDefaultDayPeriods() }));
-}
-
-function createEmptyWeekSchedule() {
-  return WEEK_DAYS.map((day) => ({ day, periods: [] }));
-}
-
-function formatHour(hour) {
-  const safe = Math.max(0, Math.min(24, Number(hour) || 0));
-  const h = Math.floor(safe);
-  return `${String(h).padStart(2, '0')}:00`;
-}
-
-function isBinaryScheduleDevice(device) {
-  return device && device.type === 'hotWater';
-}
-
-function formatScheduleValue(period, binaryMode) {
-  if (binaryMode) {
-    return Number(period.temp) >= 0.5 ? 'On' : 'Off';
-  }
-  const value = Number(period.temp);
-  return Number.isFinite(value) ? `${value.toFixed(1)}°` : '--.-°';
-}
-
-function getTempScaleColor(temp) {
-  const n = Number(temp);
-  const clamped = Math.max(10, Math.min(26, Number.isFinite(n) ? n : 18));
-  const ratio = (clamped - 10) / (26 - 10);
-  const hue = 205 - ratio * (205 - 8);
-  return `hsl(${hue} 72% 58%)`;
-}
-
-function zoneState(stateByDeviceId, id) {
-  return stateByDeviceId[String(id)] || stateByDeviceId[id] || {};
-}
-
-function formatTemperature(value) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '--.-°';
-  }
-  return `${value.toFixed(1)}°`;
-}
-
-function mapConnectionStatus(connectionState) {
-  if (connectionState === 'connected') {
-    return { label: 'Connected', dotClass: 'bg-emerald-500' };
-  }
-  if (connectionState === 'loading') {
-    return { label: 'Reconnecting', dotClass: 'bg-amber-500' };
-  }
-  if (connectionState === 'error') {
-    return { label: 'Connection error', dotClass: 'bg-rose-500' };
-  }
-  return { label: 'Disconnected', dotClass: 'bg-slate-400' };
-}
 
 export default function App() {
   const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
@@ -847,810 +648,6 @@ export default function App() {
     );
   }
 
-  if (activeTab !== 'home') {
-    if (activeTab === 'stats') {
-      const statsPullProgress = Math.min(1, statsPullDistance / 56);
-      const statsRingRadius = 10;
-      const statsRingCircumference = 2 * Math.PI * statsRingRadius;
-      const statsRingDashOffset = statsRingCircumference * (1 - statsPullProgress);
-
-      return (
-        <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-          <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
-            <div className="mb-1 flex items-center justify-between">
-              <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
-            </div>
-          </header>
-
-          <div
-            ref={statsContentRef}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
-            onTouchStart={onStatsTouchStart}
-            onTouchMove={onStatsTouchMove}
-            onTouchEnd={onStatsTouchEnd}
-            onTouchCancel={onStatsTouchEnd}
-          >
-            <div className="flex justify-center" style={{ height: statsPullDistance > 0 || isStatsRefreshing ? 36 : 0 }}>
-              <div className="mt-1.5 h-6 w-6">
-                <svg
-                  viewBox="0 0 24 24"
-                  className={isStatsRefreshing ? 'h-6 w-6 animate-spin' : 'h-6 w-6'}
-                  aria-hidden="true"
-                >
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r={statsRingRadius}
-                    fill="none"
-                    stroke="#cbd5e1"
-                    strokeWidth="2"
-                  />
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r={statsRingRadius}
-                    fill="none"
-                    stroke="#475569"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    transform="rotate(-90 12 12)"
-                    strokeDasharray={statsRingCircumference}
-                    strokeDashoffset={isStatsRefreshing ? statsRingCircumference * 0.2 : statsRingDashOffset}
-                    style={{ transition: isStatsRefreshing ? 'none' : 'stroke-dashoffset 80ms linear' }}
-                  />
-                </svg>
-              </div>
-            </div>
-
-            <section
-              className="grid gap-3 pb-2"
-              style={{ transform: `translateY(${statsPullDistance}px)`, transition: statsPullDistance === 0 ? 'transform 140ms ease' : 'none' }}
-            >
-              {zones.map((zone) => {
-                const key = String(zone.id);
-                const config = statsConfigByZone[key] || createStatsConfig('day');
-                const series = statsSeriesByZone[key] || { points: [] };
-                const isLoading = Boolean(statsLoadingByZone[key]);
-                const points = Array.isArray(series.points)
-                  ? series.points
-                      .map((p) => ({
-                        ...p,
-                        ts: Number(p.ts || Date.parse(p.timestamp || '')),
-                        currentTemp: Number.isFinite(Number(p.currentTemp)) ? Number(p.currentTemp) : null,
-                        targetTemp: Number.isFinite(Number(p.targetTemp)) ? Number(p.targetTemp) : null,
-                      }))
-                      .filter((p) => Number.isFinite(p.ts))
-                      .sort((a, b) => a.ts - b.ts)
-                  : [];
-
-                const values = points
-                  .flatMap((p) => [p.currentTemp, p.targetTemp])
-                  .filter((n) => Number.isFinite(n));
-                const saneValues = values.filter((v) => v >= 5 && v <= 35);
-                const chartValues = saneValues.length ? saneValues : values;
-                const valueMin = chartValues.length ? Math.min(...chartValues) : 18;
-                const valueMax = chartValues.length ? Math.max(...chartValues) : 22;
-                const span = valueMax - valueMin;
-                const minVal = span < 0.05 ? valueMin - 0.1 : valueMin;
-                const maxVal = span < 0.05 ? valueMax + 0.1 : valueMax;
-                const center = (minVal + maxVal) / 2;
-                const graphW = 720;
-                const graphH = 220;
-                const graphGridTopY = 2;
-                const graphGridMidY = Math.round(graphH / 2);
-                const graphGridBottomY = graphH - 2;
-                const graphCrosshairTopY = 2;
-                const graphCrosshairBottomY = graphH - 2;
-                const graphAreaBaselineY = graphH - 2;
-                const { startTs: domainStartTs, endTs: domainEndTs } = getStatsDomainBounds(config, points);
-                const currentPath = buildSeriesPath(
-                  points,
-                  graphW,
-                  graphH,
-                  (p) => p.currentTemp,
-                  minVal,
-                  maxVal,
-                  domainStartTs,
-                  domainEndTs
-                );
-                const targetPath = buildSeriesPath(
-                  points,
-                  graphW,
-                  graphH,
-                  (p) => p.targetTemp,
-                  minVal,
-                  maxVal,
-                  domainStartTs,
-                  domainEndTs
-                );
-                const currentCoords = buildSeriesCoordinates(
-                  points,
-                  graphW,
-                  graphH,
-                  (p) => p.currentTemp,
-                  minVal,
-                  maxVal,
-                  domainStartTs,
-                  domainEndTs
-                );
-                const targetCoords = buildSeriesCoordinates(
-                  points,
-                  graphW,
-                  graphH,
-                  (p) => p.targetTemp,
-                  minVal,
-                  maxVal,
-                  domainStartTs,
-                  domainEndTs
-                );
-                const currentAreaPath = buildSeriesAreaPath(currentCoords, graphAreaBaselineY);
-                const targetAreaPath = buildSeriesAreaPath(targetCoords, graphAreaBaselineY);
-                const hoverIdxRaw = statsHoverByZone[key];
-                const hoverIdx = Number.isInteger(hoverIdxRaw) ? hoverIdxRaw : null;
-                const hoveredPoint = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < points.length ? points[hoverIdx] : null;
-                const graphLeftPad = 12;
-                const graphInnerWidth = graphW - 24;
-                const firstTs = domainStartTs;
-                const lastTs = domainEndTs;
-                const midTs = firstTs + Math.max(0, lastTs - firstTs) / 2;
-                const tsSpan = Math.max(1, lastTs - firstTs);
-                const hoverX =
-                  hoveredPoint && Number(hoveredPoint.ts) >= firstTs && Number(hoveredPoint.ts) <= lastTs
-                    ? graphLeftPad + ((Number(hoveredPoint.ts) - firstTs) / tsSpan) * graphInnerWidth
-                    : null;
-
-                return (
-                  <Card key={zone.id} className="overflow-hidden">
-                    <div className="mb-3 grid gap-2">
-                      <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="inline-flex rounded-md border border-border p-0.5">
-                          <button
-                            type="button"
-                            className={`rounded px-2 py-1 text-xs font-semibold ${config.range === 'day' ? 'bg-accent text-white' : 'text-foreground'}`}
-                            onClick={() => setZoneStatsRange(zone.id, 'day')}
-                          >
-                            Day
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded px-2 py-1 text-xs font-semibold ${config.range === 'month' ? 'bg-accent text-white' : 'text-foreground'}`}
-                            onClick={() => setZoneStatsRange(zone.id, 'month')}
-                          >
-                            Month
-                          </button>
-                        </div>
-                        <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, -1)}>‹</Button>
-                        <div className="min-w-[82px] text-center text-xs font-semibold text-muted">{config.anchor}</div>
-                        <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, 1)}>›</Button>
-                      </div>
-                    </div>
-
-                    <div className="rounded-md bg-slate-50 px-2 py-1 dark:bg-slate-900">
-                      <div className="grid grid-cols-[auto,1fr] items-stretch gap-x-2">
-                        <div className="flex h-full flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
-                          <span>{`${maxVal.toFixed(1)}°`}</span>
-                          <span>{`${center.toFixed(1)}°`}</span>
-                          <span>{`${minVal.toFixed(1)}°`}</span>
-                        </div>
-                        <div>
-                          <div
-                            className="w-full"
-                            style={{ aspectRatio: `${graphW} / ${graphH}` }}
-                            onMouseMove={(event) =>
-                              setStatsHoverFromClientX(
-                                zone.id,
-                                points,
-                                event.clientX,
-                                event.currentTarget.getBoundingClientRect(),
-                                domainStartTs,
-                                domainEndTs
-                              )
-                            }
-                            onMouseLeave={() => clearStatsHover(zone.id)}
-                            onTouchStart={(event) => {
-                              event.stopPropagation();
-                              const touch = event.touches[0];
-                              if (!touch) return;
-                              setStatsHoverFromClientX(
-                                zone.id,
-                                points,
-                                touch.clientX,
-                                event.currentTarget.getBoundingClientRect(),
-                                domainStartTs,
-                                domainEndTs
-                              );
-                            }}
-                            onTouchMove={(event) => {
-                              event.stopPropagation();
-                              const touch = event.touches[0];
-                              if (!touch) return;
-                              setStatsHoverFromClientX(
-                                zone.id,
-                                points,
-                                touch.clientX,
-                                event.currentTarget.getBoundingClientRect(),
-                                domainStartTs,
-                                domainEndTs
-                              );
-                            }}
-                            onTouchEnd={() => clearStatsHover(zone.id)}
-                            onTouchCancel={() => clearStatsHover(zone.id)}
-                          >
-                            <svg viewBox={`0 0 ${graphW} ${graphH}`} className="h-full w-full text-slate-700 dark:text-slate-200">
-                              <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
-                              <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
-                              <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
-                              {targetAreaPath ? <path d={targetAreaPath} fill="rgba(139,92,246,0.2)" stroke="none" /> : null}
-                              {currentAreaPath ? <path d={currentAreaPath} fill="rgba(6,182,212,0.2)" stroke="none" /> : null}
-                              {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
-                              {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
-                              {targetCoords.map((pt, idx) => (
-                                <circle key={`target-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#8b5cf6" />
-                              ))}
-                              {currentCoords.map((pt, idx) => (
-                                <circle key={`current-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#06b6d4" />
-                              ))}
-                              {hoverX !== null ? (
-                                <line
-                                  x1={hoverX}
-                                  y1={graphCrosshairTopY}
-                                  x2={hoverX}
-                                  y2={graphCrosshairBottomY}
-                                  stroke="rgba(100,116,139,0.8)"
-                                  strokeWidth="1.5"
-                                  strokeDasharray="3 3"
-                                />
-                              ) : null}
-                              {hoveredPoint && Number.isFinite(hoveredPoint.targetTemp) ? (
-                                <circle
-                                  cx={hoverX}
-                                  cy={2 + (1 - (hoveredPoint.targetTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
-                                  r="4.5"
-                                  fill="#8b5cf6"
-                                  stroke="white"
-                                  strokeWidth="1.5"
-                                />
-                              ) : null}
-                              {hoveredPoint && Number.isFinite(hoveredPoint.currentTemp) ? (
-                                <circle
-                                  cx={hoverX}
-                                  cy={2 + (1 - (hoveredPoint.currentTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
-                                  r="4.5"
-                                  fill="#06b6d4"
-                                  stroke="white"
-                                  strokeWidth="1.5"
-                                />
-                              ) : null}
-                            </svg>
-                          </div>
-                          <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">
-                            <span>{formatStatsAxisLabel(firstTs, config.range)}</span>
-                            <span>{formatStatsAxisLabel(midTs, config.range)}</span>
-                            <span>{formatStatsAxisLabel(lastTs, config.range)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-1 flex flex-wrap items-center gap-4 text-xs">
-                      <div className="flex items-center gap-4 text-xs">
-                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
-                          <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
-                          Current
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
-                          <span className="h-2.5 w-2.5 rounded-full bg-violet-500" />
-                          Target
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="mt-1 min-h-[1rem] w-full text-xs text-muted">
-                      {hoveredPoint
-                        ? `${formatStatsTimestamp(hoveredPoint.ts, config.range)} • Current ${
-                            Number.isFinite(hoveredPoint.currentTemp) ? `${hoveredPoint.currentTemp.toFixed(1)}°` : '--.-°'
-                          } • Target ${
-                            Number.isFinite(hoveredPoint.targetTemp) ? `${hoveredPoint.targetTemp.toFixed(1)}°` : '--.-°'
-                          }`
-                        : ''}
-                    </div>
-
-                    {isLoading ? <p className="mt-1 text-xs text-muted">Loading samples…</p> : null}
-                  </Card>
-                );
-              })}
-            </section>
-          </div>
-
-          {renderBottomNav()}
-
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-              <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                <div className="mb-4 flex items-center justify-between">
-                  <strong>Menu</strong>
-                  <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
-                </div>
-                <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
-                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
-                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-                </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
-              </div>
-              </aside>
-            </>
-          )}
-        </main>
-      );
-    }
-
-    const scheduleZone = selectedScheduleZone();
-    const scheduleIsBinary = isBinaryScheduleDevice(scheduleZone);
-    const isScheduleZoneLoading = scheduleZoneId !== null && Boolean(scheduleLoadingByZone[String(scheduleZoneId)]);
-    const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
-
-    return (
-      <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-        <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
-          <div className="mb-1 flex items-center justify-between">
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={() => {
-                if (scheduleDayIndex !== null) {
-                  setScheduleDayIndex(null);
-                } else if (scheduleZoneId !== null) {
-                  setScheduleZoneId(null);
-                } else {
-                  setMenuOpen(true);
-                }
-              }}
-            >
-              {scheduleZoneId !== null ? '‹' : <Menu className="h-5 w-5" />}
-            </Button>
-            <div className="text-sm font-medium text-slate-500 dark:text-slate-300">
-              {scheduleDayIndex !== null ? dayName : scheduleZone ? scheduleZone.name : 'Select a zone'}
-            </div>
-          </div>
-        </header>
-
-        <div ref={scheduleScrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-          {scheduleZoneId === null ? (
-            <section className="grid gap-3">
-              {scheduleDevices.map((zone) => (
-                <Card
-                  key={zone.id}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    void openScheduleZone(zone.id);
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                      <p className="text-sm text-muted">Tap to edit weekly program</p>
-                    </div>
-                    <span className="text-2xl text-slate-400">›</span>
-                  </div>
-                </Card>
-              ))}
-            </section>
-          ) : scheduleDayIndex === null ? (
-            <section className="grid gap-3">
-              {isScheduleZoneLoading
-                ? WEEK_DAYS.map((day) => (
-                    <Card key={`schedule-loading-${day}`} className="animate-pulse border border-slate-200/90">
-                      <div className="flex items-center justify-between">
-                        <div className="h-7 w-36 rounded bg-slate-200 dark:bg-slate-700" />
-                        <div className="h-5 w-5 rounded bg-slate-200 dark:bg-slate-700" />
-                      </div>
-                      <div className="mt-3 grid gap-2">
-                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                        <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                      </div>
-                    </Card>
-                  ))
-                : getZoneSchedule(scheduleZoneId).map((day, dayIdx) => (
-                <Card key={day.day} className="border border-slate-200/90">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between"
-                    onClick={() => toggleScheduleDayExpanded(scheduleZoneId, dayIdx)}
-                    aria-expanded={isScheduleDayExpanded(scheduleZoneId, dayIdx)}
-                  >
-                    <h3 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{day.day}</h3>
-                    <ChevronUp
-                      className={`h-5 w-5 text-slate-400 dark:text-slate-300 transition-transform ${
-                        isScheduleDayExpanded(scheduleZoneId, dayIdx) ? 'rotate-0' : 'rotate-180'
-                      }`}
-                    />
-                  </button>
-
-                  {!isScheduleDayExpanded(scheduleZoneId, dayIdx) ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {day.periods
-                        .slice()
-                        .sort((a, b) => a.start - b.start)
-                        .map((period, idx) => (
-                          <div
-                            key={idx}
-                            className={scheduleIsBinary ? (Number(period.temp) >= 0.5 ? "rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700" : "rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600") : "rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600"}
-                          >
-                            {formatScheduleValue(period, scheduleIsBinary)} → {formatHour(period.end)}
-                          </div>
-                        ))}
-                    </div>
-                  ) : null}
-
-                  {isScheduleDayExpanded(scheduleZoneId, dayIdx) ? (
-                    <>
-                      <div className="mt-3 grid gap-3">
-                        {day.periods
-                          .slice()
-                          .sort((a, b) => a.start - b.start)
-                          .map((period, idx) => {
-                            const color = SCHEDULE_COLORS[period.colorIndex % SCHEDULE_COLORS.length];
-                            const startPct = (period.start / 24) * 100;
-                            const widthPct = ((period.end - period.start) / 24) * 100;
-                            const endLabel = formatHour(period.end);
-                            const labelCenterPct = startPct + widthPct / 2;
-                            const clampedLabelCenterPct = Math.max(18, Math.min(82, labelCenterPct));
-                            const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? '#22c55e' : '#94a3b8') : getTempScaleColor(period.temp);
-                            return (
-                              <div key={idx}>
-                                <div className="relative mb-1 h-7">
-                                  <div
-                                    className={`absolute top-0 text-center text-sm font-semibold whitespace-nowrap ${color.text} dark:text-slate-200`}
-                                    style={{ left: `${clampedLabelCenterPct}%`, transform: 'translateX(-50%)' }}
-                                  >
-                                    {formatScheduleValue(period, scheduleIsBinary)} <span className="text-xs font-medium text-slate-500 dark:text-slate-300">→ {endLabel}</span>
-                                  </div>
-                                </div>
-                                <div className="h-3 rounded-full bg-slate-100">
-                                  <div
-                                    className="h-3 rounded-full"
-                                    style={{ backgroundColor: barColor, marginLeft: `${startPct}%`, width: `${widthPct}%` }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                      </div>
-
-                      <button
-                        type="button"
-                        className="mt-4 w-full rounded-xl border border-slate-200 px-4 py-3 text-base font-semibold text-emerald-600"
-                        onClick={() => setScheduleDayIndex(dayIdx)}
-                      >
-                        Edit day
-                      </button>
-                    </>
-                  ) : null}
-                </Card>
-              ))}
-            </section>
-          ) : (
-            <section className="grid gap-3 pb-2">
-              <Card className="py-3">
-                <div className="mb-2 flex items-center justify-between text-sm text-muted">
-                  <span>{dayName}</span>
-                  <span>24h timeline</span>
-                </div>
-
-                <div className="mt-1">
-                  <div className="relative flex h-12 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800/80">
-                    {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-                      .slice()
-                      .sort((a, b) => a.start - b.start)
-                      .map((period, idx) => {
-                        const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? "#22c55e" : "#94a3b8") : getTempScaleColor(period.temp);
-                        const widthPercent = ((period.end - period.start) / 24) * 100;
-                        return (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-center text-sm font-bold text-white"
-                            style={{ width: `${widthPercent}%`, backgroundColor: barColor }}
-                          >
-                            {formatScheduleValue(period, scheduleIsBinary)}
-                          </div>
-                        );
-                      })}
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-5 px-0.5 text-xs text-slate-400 dark:text-slate-500">
-                    <span className="text-left">0:00</span>
-                    <span className="text-center">6:00</span>
-                    <span className="text-center">12:00</span>
-                    <span className="text-center">18:00</span>
-                    <span className="text-right">24:00</span>
-                  </div>
-                </div>
-              </Card>
-
-              {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-                .slice()
-                .sort((a, b) => a.start - b.start)
-                .map((period, idx) => {
-                  const color = SCHEDULE_COLORS[period.colorIndex % SCHEDULE_COLORS.length];
-                  const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? '#22c55e' : '#94a3b8') : getTempScaleColor(period.temp);
-                  return (
-                    <Card key={`${period.start}-${period.end}-${idx}`} className={`${color.bg}`}>
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-1.5 rounded-full" style={{ backgroundColor: barColor }} />
-                        <div className="min-w-[110px] text-base font-semibold text-slate-600 dark:text-slate-200">
-                          {formatHour(period.start)} - {formatHour(period.end)}
-                        </div>
-                        <div className="ml-auto flex items-center gap-2">
-                          {scheduleIsBinary ? (
-                            <button
-                              type="button"
-                              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                              onClick={() =>
-                                setSchedulePeriodValue(scheduleZoneId, scheduleDayIndex, idx, Number(period.temp) >= 0.5 ? 0 : 1)
-                              }
-                            >
-                              {Number(period.temp) >= 0.5 ? 'Set Off' : 'Set On'}
-                            </button>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="grid h-9 w-9 place-items-center rounded-full bg-white text-lg font-bold text-slate-500"
-                                onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, idx, -0.5)}
-                              >
-                                −
-                              </button>
-                              <div className={`min-w-[68px] text-center text-xl font-bold ${color.text}`}>
-                                {formatScheduleValue(period, scheduleIsBinary)}
-                              </div>
-                              <button
-                                type="button"
-                                className="grid h-9 w-9 place-items-center rounded-full bg-white text-lg font-bold text-slate-500"
-                                onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, idx, 0.5)}
-                              >
-                                +
-                              </button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            className="ml-1 grid h-9 w-9 place-items-center rounded-full bg-white text-base font-bold text-slate-400"
-                            onClick={() => removeSchedulePeriod(scheduleZoneId, scheduleDayIndex, idx)}
-                            aria-label="Delete period"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    </Card>
-                  );
-                })}
-
-              <Button variant="outline" onClick={() => addSchedulePeriod(scheduleZoneId, scheduleDayIndex)}>
-                + Add period
-              </Button>
-            </section>
-          )}
-        </div>
-
-        {renderBottomNav()}
-
-        {menuOpen && (
-          <>
-            <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-            <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-              <div className="mb-4 flex items-center justify-between">
-                <strong>Menu</strong>
-                <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
-              </div>
-              <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
-                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
-                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-                </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
-              </div>
-            </aside>
-          </>
-        )}
-      </main>
-    );
-  }
-
-  if (activeTab === 'home' && selectedZone) {
-    const zone = selectedZone;
-    const state = zoneState(stateByDeviceId, zone.id);
-    const current = typeof state.currentTemp === 'number' ? `${state.currentTemp.toFixed(1)}°` : '--.-°';
-    const target = typeof state.targetTemp === 'number' ? state.targetTemp : targetDraft;
-    const heating = state.heatingOn;
-    const hasChange = typeof state.targetTemp === 'number' ? Math.abs(targetDraft - state.targetTemp) >= 0.01 : true;
-    const minTemp = 5;
-    const maxTemp = 35;
-    const dialSize = 320;
-    const center = dialSize / 2;
-    const radius = dialSize * 0.36;
-    const knobRadius = 12;
-    const trackStroke = 12;
-    const ringTouchTolerance = 22;
-    const startAngle = 135;
-    const sweepAngle = 270;
-    const ratio = Math.min(1, Math.max(0, (targetDraft - minTemp) / (maxTemp - minTemp)));
-    const dialAngle = startAngle + ratio * sweepAngle;
-    const toPoint = (angleDeg) => {
-      const angle = (angleDeg * Math.PI) / 180;
-      return {
-        x: center + radius * Math.cos(angle),
-        y: center + radius * Math.sin(angle),
-      };
-    };
-    const start = toPoint(startAngle);
-    const end = toPoint(startAngle + sweepAngle);
-    const knob = toPoint(dialAngle);
-    const largeArc = dialAngle - startAngle > 180 ? 1 : 0;
-    const basePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 1 1 ${end.x} ${end.y}`;
-    const activePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${knob.x} ${knob.y}`;
-    const stepTarget = (delta) => {
-      setTargetDraft((prev) => {
-        const next = Math.round((prev + delta) * 2) / 2;
-        return Math.max(minTemp, Math.min(maxTemp, next));
-      });
-    };
-
-    const resolvePoint = (event, element) => {
-      const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const dx = x - center;
-      const dy = y - center;
-      const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
-      const angleDeg = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
-      return { distanceFromCenter, angleDeg };
-    };
-
-    const shouldStartDialDrag = (event, element) => {
-      const { distanceFromCenter } = resolvePoint(event, element);
-      return Math.abs(distanceFromCenter - radius) <= trackStroke + ringTouchTolerance;
-    };
-
-    const updateDialFromPointer = (event, element) => {
-      const { angleDeg } = resolvePoint(event, element);
-      const start = ((startAngle % 360) + 360) % 360;
-      const clockwiseDelta = (angleDeg - start + 360) % 360;
-      const clampedDelta = Math.min(sweepAngle, Math.max(0, clockwiseDelta));
-      const ratio = clampedDelta / sweepAngle;
-      const next = minTemp + ratio * (maxTemp - minTemp);
-      const snapped = Math.round(next * 2) / 2;
-      setTargetDraft(Math.max(minTemp, Math.min(maxTemp, snapped)));
-    };
-
-    return (
-      <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-        <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mb-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Button size="icon" variant="outline" onClick={() => setSelectedZoneId(null)} aria-label="Go back">‹</Button>
-            <h2 className="text-3xl font-bold tracking-tight text-foreground">{zone.name}</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Card className="py-3">
-              <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                <span>🌡️</span>
-                <span>Current</span>
-              </div>
-              <div className="text-4xl font-bold tracking-tight text-foreground">{current}</div>
-            </Card>
-            <Card className="py-3">
-              <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                <span>🎯</span>
-                <span>Target</span>
-              </div>
-              <div className="text-4xl font-bold tracking-tight text-foreground">{formatTemperature(state.targetTemp)}</div>
-            </Card>
-          </div>
-        </div>
-
-        <Card className="grid gap-4">
-          <div className="flex flex-col items-center justify-center gap-3 py-2">
-            <div className="relative grid place-items-center select-none" style={{ width: dialSize, height: dialSize }}>
-              <svg
-                width={dialSize}
-                height={dialSize}
-                style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
-                onPointerDown={(event) => {
-                  const element = event.currentTarget;
-                  if (!shouldStartDialDrag(event, element)) {
-                    return;
-                  }
-                  dialPointerIdRef.current = event.pointerId;
-                  updateDialFromPointer(event, element);
-                  element.setPointerCapture?.(event.pointerId);
-                }}
-                onPointerMove={(event) => {
-                  if (dialPointerIdRef.current !== event.pointerId) {
-                    return;
-                  }
-                  updateDialFromPointer(event, event.currentTarget);
-                }}
-                onPointerUp={(event) => {
-                  if (dialPointerIdRef.current !== event.pointerId) {
-                    return;
-                  }
-                  dialPointerIdRef.current = null;
-                  event.currentTarget.releasePointerCapture?.(event.pointerId);
-                }}
-                onPointerCancel={(event) => {
-                  if (dialPointerIdRef.current !== event.pointerId) {
-                    return;
-                  }
-                  dialPointerIdRef.current = null;
-                  event.currentTarget.releasePointerCapture?.(event.pointerId);
-                }}
-              >
-                <defs>
-                  <linearGradient id="tempDialGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#F6D365" />
-                    <stop offset="55%" stopColor="#F39C12" />
-                    <stop offset="100%" stopColor="#E74C3C" />
-                  </linearGradient>
-                </defs>
-                <path d={basePath} fill="none" stroke="#e6ebf1" strokeWidth={trackStroke} strokeLinecap="round" />
-                <path d={activePath} fill="none" stroke="url(#tempDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
-                <circle cx={knob.x} cy={knob.y} r={knobRadius} fill="#ffffff" stroke="#635bff" strokeWidth="3" />
-              </svg>
-              <div className="pointer-events-none absolute inset-0 grid place-items-center">
-                <div className="grid place-items-center gap-3 text-center">
-                  <button
-                    type="button"
-                    className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                    onClick={() => stepTarget(0.5)}
-                    aria-label="Increase target temperature"
-                  >
-                    +
-                  </button>
-                  <div className="text-5xl font-bold tracking-tight text-foreground">{targetDraft.toFixed(1)}°</div>
-                  <button
-                    type="button"
-                    className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                    onClick={() => stepTarget(-0.5)}
-                    aria-label="Decrease target temperature"
-                  >
-                    −
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-center">
-            <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
-              {heating ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
-              {heating ? 'Heating' : 'Idle'}
-            </div>
-          </div>
-        </Card>
-
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={() => writeTarget(zone.id, targetDraft)}
-            disabled={!hasChange}
-            className="h-12 w-full rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {status.toLowerCase().includes('setting') ? 'Setting...' : 'Set temperature'}
-          </button>
-        </div>
-        <p className="mt-3 text-sm text-muted">{status}</p>
-        </div>
-
-        {renderBottomNav()}
-      </main>
-    );
-  }
-
   const hotWater = devices.find((d) => d.type === 'hotWater');
   const connection = mapConnectionStatus(connectionState);
   const isErrorStatus = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
@@ -1659,171 +656,116 @@ export default function App() {
   const ringRadius = 10;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringDashOffset = ringCircumference * (1 - pullProgress);
+  const scheduleZone = selectedScheduleZone();
+  const scheduleIsBinary = isBinaryScheduleDevice(scheduleZone);
+  const isScheduleZoneLoading = scheduleZoneId !== null && Boolean(scheduleLoadingByZone[String(scheduleZoneId)]);
+  const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
+
+  if (activeTab === 'stats') {
+    return (
+      <StatsScreen
+        zones={zones}
+        statsPullDistance={statsPullDistance}
+        isStatsRefreshing={isStatsRefreshing}
+        statsContentRef={statsContentRef}
+        onStatsTouchStart={onStatsTouchStart}
+        onStatsTouchMove={onStatsTouchMove}
+        onStatsTouchEnd={onStatsTouchEnd}
+        menuOpen={menuOpen}
+        setMenuOpen={setMenuOpen}
+        renderBottomNav={renderBottomNav}
+        statsConfigByZone={statsConfigByZone}
+        createStatsConfig={createStatsConfig}
+        statsSeriesByZone={statsSeriesByZone}
+        statsLoadingByZone={statsLoadingByZone}
+        getStatsDomainBounds={getStatsDomainBounds}
+        buildSeriesPath={buildSeriesPath}
+        buildSeriesCoordinates={buildSeriesCoordinates}
+        buildSeriesAreaPath={buildSeriesAreaPath}
+        statsHoverByZone={statsHoverByZone}
+        setZoneStatsRange={setZoneStatsRange}
+        shiftZoneStats={shiftZoneStats}
+        setStatsHoverFromClientX={setStatsHoverFromClientX}
+        clearStatsHover={clearStatsHover}
+        formatStatsAxisLabel={formatStatsAxisLabel}
+        formatStatsTimestamp={formatStatsTimestamp}
+        toggleTheme={toggleTheme}
+        theme={theme}
+        onLogout={onLogout}
+      />
+    );
+  }
+
+  if (activeTab === 'schedule') {
+    return (
+      <ScheduleScreen
+        scheduleZone={scheduleZone}
+        scheduleIsBinary={scheduleIsBinary}
+        isScheduleZoneLoading={isScheduleZoneLoading}
+        dayName={dayName}
+        scheduleZoneId={scheduleZoneId}
+        setScheduleZoneId={setScheduleZoneId}
+        scheduleDayIndex={scheduleDayIndex}
+        setScheduleDayIndex={setScheduleDayIndex}
+        scheduleScrollerRef={scheduleScrollerRef}
+        scheduleDevices={scheduleDevices}
+        openScheduleZone={openScheduleZone}
+        WEEK_DAYS={WEEK_DAYS}
+        getZoneSchedule={getZoneSchedule}
+        isScheduleDayExpanded={isScheduleDayExpanded}
+        toggleScheduleDayExpanded={toggleScheduleDayExpanded}
+        formatScheduleValue={formatScheduleValue}
+        formatHour={formatHour}
+        getTempScaleColor={getTempScaleColor}
+        SCHEDULE_COLORS={SCHEDULE_COLORS}
+        setSchedulePeriodValue={setSchedulePeriodValue}
+        adjustScheduleTemp={adjustScheduleTemp}
+        removeSchedulePeriod={removeSchedulePeriod}
+        addSchedulePeriod={addSchedulePeriod}
+        getDayPeriods={getDayPeriods}
+        renderBottomNav={renderBottomNav}
+        menuOpen={menuOpen}
+        setMenuOpen={setMenuOpen}
+        toggleTheme={toggleTheme}
+        theme={theme}
+        onLogout={onLogout}
+      />
+    );
+  }
 
   return (
-    <main className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-      <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
-        <div className="mb-1 flex items-center justify-between">
-          <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
-            <span>{connection.label}</span>
-          </div>
-        </div>
-      </header>
-
-      <div
-        ref={contentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
-        onTouchStart={onContentTouchStart}
-        onTouchMove={onContentTouchMove}
-        onTouchEnd={onContentTouchEnd}
-        onTouchCancel={onContentTouchEnd}
-      >
-        <div className="flex justify-center" style={{ height: pullDistance > 0 || isRefreshing ? 36 : 0 }}>
-          <div className="mt-1.5 h-6 w-6">
-            <svg
-              viewBox="0 0 24 24"
-              className={isRefreshing ? 'h-6 w-6 animate-spin' : 'h-6 w-6'}
-              aria-hidden="true"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r={ringRadius}
-                fill="none"
-                stroke="#cbd5e1"
-                strokeWidth="2"
-              />
-              <circle
-                cx="12"
-                cy="12"
-                r={ringRadius}
-                fill="none"
-                stroke="#475569"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                transform="rotate(-90 12 12)"
-                strokeDasharray={ringCircumference}
-                strokeDashoffset={isRefreshing ? ringCircumference * 0.2 : ringDashOffset}
-                style={{ transition: isRefreshing ? 'none' : 'stroke-dashoffset 80ms linear' }}
-              />
-            </svg>
-          </div>
-        </div>
-
-        <div style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 140ms ease' : 'none' }}>
-          {status ? (
-            <p className={`mb-3 text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
-          ) : null}
-
-          {isDashboardLoading ? (
-            <section className="mb-3 grid gap-3 md:grid-cols-2">
-              {[1, 2, 3].map((idx) => (
-                <Card key={`zone-loading-${idx}`} className="animate-pulse">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="h-6 w-36 rounded bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-10 w-20 rounded bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="h-7 w-24 rounded-full bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-5 w-20 rounded bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="mt-2 h-4 w-40 rounded bg-slate-200 dark:bg-slate-700" />
-                </Card>
-              ))}
-              <p className="col-span-full text-center text-sm text-muted">Loading zones…</p>
-            </section>
-          ) : (
-            <section className="mb-3 grid gap-3 md:grid-cols-2">
-            {zones.map((zone) => {
-              const state = zoneState(stateByDeviceId, zone.id);
-              const heatingOn = Boolean(state.heatingOn);
-              const showLoading = !state || typeof state.currentTemp !== 'number' || typeof state.targetTemp !== 'number';
-              return (
-                <Card
-                  key={zone.id}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setSelectedZoneId(zone.id);
-                    setTargetDraft(typeof state.targetTemp === 'number' ? state.targetTemp : 20);
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                    <div className="text-4xl font-bold tracking-tight text-foreground">
-                      {showLoading ? '--.-°' : formatTemperature(state.currentTemp)}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
-                      {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-sm text-muted">
-                      {heatingOn ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
-                      <span>{showLoading ? 'Loading…' : heatingOn ? 'Heating' : 'Idle'}</span>
-                    </div>
-                  </div>
-
-                  {showLoading ? (
-                    <p className="mt-2 text-xs font-semibold text-muted">Fetching latest zone state…</p>
-                  ) : null}
-                </Card>
-              );
-            })}
-          </section>
-          )}
-
-          {hotWater && (
-            <Card>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-lg font-semibold text-foreground">{hotWater.name || 'Hot Water'}</h3>
-                <div className="flex items-center gap-1.5 text-sm text-muted">
-                  <span className={`h-2 w-2 rounded-full ${zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                  <span>{zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'On' : 'Off'}</span>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <Button
-                  onClick={() => writeHotWater(hotWater.id, 60)}
-                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
-                >
-                  Boost 1h
-                </Button>
-                <Button
-                  onClick={() => writeHotWater(hotWater.id, 120)}
-                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
-                >
-                  Boost 2h
-                </Button>
-                <Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button>
-              </div>
-            </Card>
-          )}
-        </div>
-      </div>
-
-      {renderBottomNav()}
-
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} />
-          <aside className="fixed left-0 top-0 z-50 h-screen w-[85vw] max-w-xs border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-            <div className="mb-4 flex items-center justify-between">
-              <strong>Menu</strong>
-              <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
-            </div>
-            <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
-                  {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
-                  {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-                </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
-              </div>
-          </aside>
-        </>
-      )}
-    </main>
+    <HomeScreen
+      selectedZone={selectedZone}
+      zoneState={zoneState}
+      stateByDeviceId={stateByDeviceId}
+      targetDraft={targetDraft}
+      setTargetDraft={setTargetDraft}
+      setSelectedZoneId={setSelectedZoneId}
+      status={status}
+      writeTarget={writeTarget}
+      renderBottomNav={renderBottomNav}
+      dialPointerIdRef={dialPointerIdRef}
+      connection={connection}
+      menuOpen={menuOpen}
+      setMenuOpen={setMenuOpen}
+      toggleTheme={toggleTheme}
+      theme={theme}
+      onLogout={onLogout}
+      contentRef={contentRef}
+      onContentTouchStart={onContentTouchStart}
+      onContentTouchMove={onContentTouchMove}
+      onContentTouchEnd={onContentTouchEnd}
+      pullDistance={pullDistance}
+      isRefreshing={isRefreshing}
+      ringRadius={ringRadius}
+      ringCircumference={ringCircumference}
+      ringDashOffset={ringDashOffset}
+      isErrorStatus={isErrorStatus}
+      isDashboardLoading={isDashboardLoading}
+      zones={zones}
+      formatTemperature={formatTemperature}
+      hotWater={hotWater}
+      writeHotWater={writeHotWater}
+    />
   );
 }
