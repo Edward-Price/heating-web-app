@@ -37,7 +37,7 @@ html.dark body {
 }
 
 #root {
-  overflow: visible;
+  overflow: hidden;
 }
 
 html.dark .text-foreground {
