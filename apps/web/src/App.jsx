@@ -37,6 +37,11 @@ const SCHEDULE_COLORS = [
 ];
 
 export default function App() {
+  const debugLayoutEnabled = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('debugLayout') === '1';
+  }, []);
   const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -62,6 +67,8 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statsPullDistance, setStatsPullDistance] = useState(0);
   const [isStatsRefreshing, setIsStatsRefreshing] = useState(false);
+  const [layoutDebug, setLayoutDebug] = useState(null);
+  const [layoutCopyStatus, setLayoutCopyStatus] = useState('');
   const isLoadingRef = useRef(false);
   const dialPointerIdRef = useRef(null);
   const scheduleScrollerRef = useRef(null);
@@ -175,12 +182,62 @@ export default function App() {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
-  useEffect(() => {
-    const setAppHeight = () => {
-      const viewportHeight = window.visualViewport?.height || window.innerHeight;
-      document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+  const setAppHeight = useCallback(() => {
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+  }, []);
+
+  const collectLayoutSnapshot = useCallback(() => {
+    if (!debugLayoutEnabled) return null;
+
+    const toRect = (element) => {
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        height: Math.round(rect.height),
+      };
     };
 
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.visibility = 'hidden';
+    probe.style.pointerEvents = 'none';
+    probe.style.paddingTop = 'env(safe-area-inset-top)';
+    probe.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    document.body.appendChild(probe);
+    const probeStyle = getComputedStyle(probe);
+    const safeAreaTop = probeStyle.paddingTop;
+    const safeAreaBottom = probeStyle.paddingBottom;
+    probe.remove();
+
+    const main = document.querySelector('main');
+    const nav = document.querySelector('nav');
+    const root = document.getElementById('root');
+    const htmlStyle = getComputedStyle(document.documentElement);
+    const snapshot = {
+      timestamp: new Date().toISOString(),
+      activeTab,
+      standalone: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
+      ua: window.navigator.userAgent,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      visualViewportHeight: window.visualViewport?.height ?? null,
+      visualViewportOffsetTop: window.visualViewport?.offsetTop ?? null,
+      docClientHeight: document.documentElement.clientHeight,
+      appHeightVar: htmlStyle.getPropertyValue('--app-height').trim(),
+      safeAreaTop,
+      safeAreaBottom,
+      mainRect: toRect(main),
+      navRect: toRect(nav),
+      rootRect: toRect(root),
+    };
+    setLayoutDebug(snapshot);
+    return snapshot;
+  }, [activeTab, debugLayoutEnabled]);
+
+  useEffect(() => {
     setAppHeight();
     window.addEventListener('resize', setAppHeight);
     window.addEventListener('orientationchange', setAppHeight);
@@ -191,7 +248,41 @@ export default function App() {
       window.removeEventListener('orientationchange', setAppHeight);
       window.visualViewport?.removeEventListener('resize', setAppHeight);
     };
-  }, []);
+  }, [setAppHeight]);
+
+  useEffect(() => {
+    if (!debugLayoutEnabled) return undefined;
+
+    const refresh = () => {
+      setAppHeight();
+      window.requestAnimationFrame(() => {
+        collectLayoutSnapshot();
+      });
+    };
+
+    refresh();
+    window.addEventListener('resize', refresh);
+    window.addEventListener('orientationchange', refresh);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('pageshow', refresh);
+    window.addEventListener('visibilitychange', refresh);
+    window.visualViewport?.addEventListener('resize', refresh);
+
+    return () => {
+      window.removeEventListener('resize', refresh);
+      window.removeEventListener('orientationchange', refresh);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('pageshow', refresh);
+      window.removeEventListener('visibilitychange', refresh);
+      window.visualViewport?.removeEventListener('resize', refresh);
+    };
+  }, [collectLayoutSnapshot, debugLayoutEnabled, setAppHeight]);
+
+  useEffect(() => {
+    if (!layoutCopyStatus) return undefined;
+    const timeoutId = window.setTimeout(() => setLayoutCopyStatus(''), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [layoutCopyStatus]);
 
   useEffect(() => {
     if (sessionToken) {
@@ -647,22 +738,89 @@ export default function App() {
     setStatsHoverByZone((prev) => ({ ...prev, [String(zoneId)]: null }));
   }, []);
 
+  async function copyLayoutSnapshot() {
+    const snapshot = collectLayoutSnapshot();
+    if (!snapshot) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      setLayoutCopyStatus('Copied');
+    } catch (_error) {
+      setLayoutCopyStatus('Copy failed');
+    }
+  }
+
+  function renderLayoutDebugOverlay() {
+    if (!debugLayoutEnabled) return null;
+    const data = layoutDebug;
+
+    return (
+      <aside className="fixed right-2 top-2 z-[120] max-h-[40vh] w-[min(92vw,360px)] overflow-auto rounded-lg border border-slate-400/70 bg-white/95 p-2 text-[11px] text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900/95 dark:text-slate-100">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <strong className="text-xs">Layout Debug</strong>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setAppHeight();
+                void collectLayoutSnapshot();
+              }}
+              className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] font-semibold dark:border-slate-600"
+            >
+              Recalc
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void copyLayoutSnapshot();
+              }}
+              className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] font-semibold dark:border-slate-600"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+        {layoutCopyStatus ? <p className="mb-1 text-[10px] font-semibold">{layoutCopyStatus}</p> : null}
+        <pre className="m-0 whitespace-pre-wrap break-all leading-[1.25]">
+          {data
+            ? JSON.stringify({
+                activeTab: data.activeTab,
+                standalone: data.standalone,
+                inner: `${data.innerWidth}x${data.innerHeight}`,
+                vvHeight: data.visualViewportHeight,
+                vvTop: data.visualViewportOffsetTop,
+                docClientHeight: data.docClientHeight,
+                appHeightVar: data.appHeightVar,
+                safeTop: data.safeAreaTop,
+                safeBottom: data.safeAreaBottom,
+                mainRect: data.mainRect,
+                navRect: data.navRect,
+                rootRect: data.rootRect,
+              }, null, 2)
+            : 'Collecting...'}
+        </pre>
+      </aside>
+    );
+  }
+
   if (!loggedIn) {
     return (
-      <main className="mx-auto h-[var(--app-height)] max-w-5xl overflow-y-auto px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
-        <header className="mb-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Heating Web App</h1>
-        </header>
-        <Card>
-          <h2 className="mb-4 text-xl font-semibold">Sign in</h2>
-          <form className="grid max-w-md gap-3" onSubmit={onLogin}>
-            <label className="grid gap-1 text-sm font-semibold">Email<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-            <label className="grid gap-1 text-sm font-semibold">Password<Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
-            <Button type="submit">Sign in</Button>
-          </form>
-        </Card>
-        <p className="mt-3 text-sm text-muted">{status}</p>
-      </main>
+      <>
+        <main className="mx-auto h-[var(--app-height)] max-w-5xl overflow-y-auto px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
+          <header className="mb-4 flex items-center justify-between">
+            <h1 className="text-2xl font-bold">Heating Web App</h1>
+          </header>
+          <Card>
+            <h2 className="mb-4 text-xl font-semibold">Sign in</h2>
+            <form className="grid max-w-md gap-3" onSubmit={onLogin}>
+              <label className="grid gap-1 text-sm font-semibold">Email<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+              <label className="grid gap-1 text-sm font-semibold">Password<Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+              <Button type="submit">Sign in</Button>
+            </form>
+          </Card>
+          <p className="mt-3 text-sm text-muted">{status}</p>
+        </main>
+        {renderLayoutDebugOverlay()}
+      </>
     );
   }
 
@@ -681,109 +839,118 @@ export default function App() {
 
   if (activeTab === 'stats') {
     return (
-      <StatsScreen
-        zones={zones}
-        statsPullDistance={statsPullDistance}
-        isStatsRefreshing={isStatsRefreshing}
-        statsContentRef={statsContentRef}
-        onStatsTouchStart={onStatsTouchStart}
-        onStatsTouchMove={onStatsTouchMove}
-        onStatsTouchEnd={onStatsTouchEnd}
-        menuOpen={menuOpen}
-        setMenuOpen={setMenuOpen}
-        renderBottomNav={renderBottomNav}
-        statsConfigByZone={statsConfigByZone}
-        createStatsConfig={createStatsConfig}
-        statsSeriesByZone={statsSeriesByZone}
-        statsLoadingByZone={statsLoadingByZone}
-        getStatsDomainBounds={getStatsDomainBounds}
-        buildSeriesPath={buildSeriesPath}
-        buildSeriesCoordinates={buildSeriesCoordinates}
-        buildSeriesAreaPath={buildSeriesAreaPath}
-        statsHoverByZone={statsHoverByZone}
-        setZoneStatsRange={setZoneStatsRange}
-        shiftZoneStats={shiftZoneStats}
-        setStatsHoverFromClientX={setStatsHoverFromClientX}
-        clearStatsHover={clearStatsHover}
-        formatStatsAxisLabel={formatStatsAxisLabel}
-        formatStatsTimestamp={formatStatsTimestamp}
-        toggleTheme={toggleTheme}
-        theme={theme}
-        onLogout={onLogout}
-      />
+      <>
+        <StatsScreen
+          zones={zones}
+          statsPullDistance={statsPullDistance}
+          isStatsRefreshing={isStatsRefreshing}
+          statsContentRef={statsContentRef}
+          onStatsTouchStart={onStatsTouchStart}
+          onStatsTouchMove={onStatsTouchMove}
+          onStatsTouchEnd={onStatsTouchEnd}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          renderBottomNav={renderBottomNav}
+          statsConfigByZone={statsConfigByZone}
+          createStatsConfig={createStatsConfig}
+          statsSeriesByZone={statsSeriesByZone}
+          statsLoadingByZone={statsLoadingByZone}
+          getStatsDomainBounds={getStatsDomainBounds}
+          buildSeriesPath={buildSeriesPath}
+          buildSeriesCoordinates={buildSeriesCoordinates}
+          buildSeriesAreaPath={buildSeriesAreaPath}
+          statsHoverByZone={statsHoverByZone}
+          setZoneStatsRange={setZoneStatsRange}
+          shiftZoneStats={shiftZoneStats}
+          setStatsHoverFromClientX={setStatsHoverFromClientX}
+          clearStatsHover={clearStatsHover}
+          formatStatsAxisLabel={formatStatsAxisLabel}
+          formatStatsTimestamp={formatStatsTimestamp}
+          toggleTheme={toggleTheme}
+          theme={theme}
+          onLogout={onLogout}
+        />
+        {renderLayoutDebugOverlay()}
+      </>
     );
   }
 
   if (activeTab === 'schedule') {
     return (
-      <ScheduleScreen
-        scheduleZone={scheduleZone}
-        scheduleIsBinary={scheduleIsBinary}
-        isScheduleZoneLoading={isScheduleZoneLoading}
-        dayName={dayName}
-        scheduleZoneId={scheduleZoneId}
-        setScheduleZoneId={setScheduleZoneId}
-        scheduleDayIndex={scheduleDayIndex}
-        setScheduleDayIndex={setScheduleDayIndex}
-        scheduleScrollerRef={scheduleScrollerRef}
-        scheduleDevices={scheduleDevices}
-        openScheduleZone={openScheduleZone}
-        WEEK_DAYS={WEEK_DAYS}
-        getZoneSchedule={getZoneSchedule}
-        isScheduleDayExpanded={isScheduleDayExpanded}
-        toggleScheduleDayExpanded={toggleScheduleDayExpanded}
-        formatScheduleValue={formatScheduleValue}
-        formatHour={formatHour}
-        getTempScaleColor={getTempScaleColor}
-        SCHEDULE_COLORS={SCHEDULE_COLORS}
-        setSchedulePeriodValue={setSchedulePeriodValue}
-        adjustScheduleTemp={adjustScheduleTemp}
-        removeSchedulePeriod={removeSchedulePeriod}
-        addSchedulePeriod={addSchedulePeriod}
-        getDayPeriods={getDayPeriods}
+      <>
+        <ScheduleScreen
+          scheduleZone={scheduleZone}
+          scheduleIsBinary={scheduleIsBinary}
+          isScheduleZoneLoading={isScheduleZoneLoading}
+          dayName={dayName}
+          scheduleZoneId={scheduleZoneId}
+          setScheduleZoneId={setScheduleZoneId}
+          scheduleDayIndex={scheduleDayIndex}
+          setScheduleDayIndex={setScheduleDayIndex}
+          scheduleScrollerRef={scheduleScrollerRef}
+          scheduleDevices={scheduleDevices}
+          openScheduleZone={openScheduleZone}
+          WEEK_DAYS={WEEK_DAYS}
+          getZoneSchedule={getZoneSchedule}
+          isScheduleDayExpanded={isScheduleDayExpanded}
+          toggleScheduleDayExpanded={toggleScheduleDayExpanded}
+          formatScheduleValue={formatScheduleValue}
+          formatHour={formatHour}
+          getTempScaleColor={getTempScaleColor}
+          SCHEDULE_COLORS={SCHEDULE_COLORS}
+          setSchedulePeriodValue={setSchedulePeriodValue}
+          adjustScheduleTemp={adjustScheduleTemp}
+          removeSchedulePeriod={removeSchedulePeriod}
+          addSchedulePeriod={addSchedulePeriod}
+          getDayPeriods={getDayPeriods}
+          renderBottomNav={renderBottomNav}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          toggleTheme={toggleTheme}
+          theme={theme}
+          onLogout={onLogout}
+        />
+        {renderLayoutDebugOverlay()}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <HomeScreen
+        selectedZone={selectedZone}
+        zoneState={zoneState}
+        stateByDeviceId={stateByDeviceId}
+        targetDraft={targetDraft}
+        setTargetDraft={setTargetDraft}
+        setSelectedZoneId={setSelectedZoneId}
+        status={status}
+        writeTarget={writeTarget}
         renderBottomNav={renderBottomNav}
+        dialPointerIdRef={dialPointerIdRef}
+        connection={connection}
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
         theme={theme}
         onLogout={onLogout}
+        contentRef={contentRef}
+        onContentTouchStart={onContentTouchStart}
+        onContentTouchMove={onContentTouchMove}
+        onContentTouchEnd={onContentTouchEnd}
+        pullDistance={pullDistance}
+        isRefreshing={isRefreshing}
+        ringRadius={ringRadius}
+        ringCircumference={ringCircumference}
+        ringDashOffset={ringDashOffset}
+        isErrorStatus={isErrorStatus}
+        isDashboardLoading={isDashboardLoading}
+        zones={zones}
+        formatTemperature={formatTemperature}
+        hotWater={hotWater}
+        writeHotWater={writeHotWater}
       />
-    );
-  }
-
-  return (
-    <HomeScreen
-      selectedZone={selectedZone}
-      zoneState={zoneState}
-      stateByDeviceId={stateByDeviceId}
-      targetDraft={targetDraft}
-      setTargetDraft={setTargetDraft}
-      setSelectedZoneId={setSelectedZoneId}
-      status={status}
-      writeTarget={writeTarget}
-      renderBottomNav={renderBottomNav}
-      dialPointerIdRef={dialPointerIdRef}
-      connection={connection}
-      menuOpen={menuOpen}
-      setMenuOpen={setMenuOpen}
-      toggleTheme={toggleTheme}
-      theme={theme}
-      onLogout={onLogout}
-      contentRef={contentRef}
-      onContentTouchStart={onContentTouchStart}
-      onContentTouchMove={onContentTouchMove}
-      onContentTouchEnd={onContentTouchEnd}
-      pullDistance={pullDistance}
-      isRefreshing={isRefreshing}
-      ringRadius={ringRadius}
-      ringCircumference={ringCircumference}
-      ringDashOffset={ringDashOffset}
-      isErrorStatus={isErrorStatus}
-      isDashboardLoading={isDashboardLoading}
-      zones={zones}
-      formatTemperature={formatTemperature}
-      hotWater={hotWater}
-      writeHotWater={writeHotWater}
-    />
+      {renderLayoutDebugOverlay()}
+    </>
   );
 }
