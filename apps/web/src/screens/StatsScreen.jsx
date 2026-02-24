@@ -30,6 +30,8 @@ export default function StatsScreen({
   formatStatsAxisLabel,
   formatStatsTimestamp,
   toggleTheme,
+  debugLayoutEnabled,
+  toggleDebugLayout,
   theme,
   onLogout,
 }) {
@@ -365,6 +367,8 @@ export default function StatsScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        debugLayoutEnabled={debugLayoutEnabled}
+        toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
       />

@@ -29,6 +29,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
 const THEME_STORAGE_KEY = 'heating-web-theme';
+const DEBUG_LAYOUT_STORAGE_KEY = 'heating-web-debug-layout';
 const SCHEDULE_COLORS = [
   { bg: 'bg-sky-50', text: 'text-sky-700', bar: 'bg-sky-400', chip: 'bg-sky-500' },
   { bg: 'bg-orange-50', text: 'text-orange-700', bar: 'bg-orange-400', chip: 'bg-orange-500' },
@@ -37,11 +38,14 @@ const SCHEDULE_COLORS = [
 ];
 
 export default function App() {
-  const debugLayoutEnabled = useMemo(() => {
+  const [debugLayoutEnabled, setDebugLayoutEnabled] = useState(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    return params.get('debugLayout') === '1';
-  }, []);
+    const queryValue = params.get('debugLayout');
+    if (queryValue === '1') return true;
+    if (queryValue === '0') return false;
+    return localStorage.getItem(DEBUG_LAYOUT_STORAGE_KEY) === '1';
+  });
   const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -181,6 +185,10 @@ export default function App() {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(DEBUG_LAYOUT_STORAGE_KEY, debugLayoutEnabled ? '1' : '0');
+  }, [debugLayoutEnabled]);
 
   const setAppHeight = useCallback(() => {
     const viewportHeight = window.visualViewport?.height || window.innerHeight;
@@ -749,6 +757,10 @@ export default function App() {
     }
   }
 
+  function toggleDebugLayout() {
+    setDebugLayoutEnabled((prev) => !prev);
+  }
+
   function renderLayoutDebugOverlay() {
     if (!debugLayoutEnabled) return null;
     const data = layoutDebug;
@@ -867,6 +879,8 @@ export default function App() {
           formatStatsAxisLabel={formatStatsAxisLabel}
           formatStatsTimestamp={formatStatsTimestamp}
           toggleTheme={toggleTheme}
+          debugLayoutEnabled={debugLayoutEnabled}
+          toggleDebugLayout={toggleDebugLayout}
           theme={theme}
           onLogout={onLogout}
         />
@@ -907,6 +921,8 @@ export default function App() {
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           toggleTheme={toggleTheme}
+          debugLayoutEnabled={debugLayoutEnabled}
+          toggleDebugLayout={toggleDebugLayout}
           theme={theme}
           onLogout={onLogout}
         />
@@ -932,6 +948,8 @@ export default function App() {
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        debugLayoutEnabled={debugLayoutEnabled}
+        toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
         contentRef={contentRef}

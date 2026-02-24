@@ -32,6 +32,8 @@ export default function ScheduleScreen({
   menuOpen,
   setMenuOpen,
   toggleTheme,
+  debugLayoutEnabled,
+  toggleDebugLayout,
   theme,
   onLogout,
 }) {
@@ -286,6 +288,8 @@ export default function ScheduleScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        debugLayoutEnabled={debugLayoutEnabled}
+        toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
       />

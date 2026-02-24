@@ -1,7 +1,15 @@
 import { Moon, Sun, X } from 'lucide-react';
 import { Button } from '../ui/button';
 
-export default function AppMenuDrawer({ menuOpen, setMenuOpen, toggleTheme, theme, onLogout }) {
+export default function AppMenuDrawer({
+  menuOpen,
+  setMenuOpen,
+  toggleTheme,
+  debugLayoutEnabled,
+  toggleDebugLayout,
+  theme,
+  onLogout
+}) {
   if (!menuOpen) return null;
 
   return (
@@ -16,6 +24,9 @@ export default function AppMenuDrawer({ menuOpen, setMenuOpen, toggleTheme, them
           <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
             {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </Button>
+          <Button variant="outline" className="w-full justify-start" onClick={toggleDebugLayout}>
+            {`Debug layout: ${debugLayoutEnabled ? 'On' : 'Off'}`}
           </Button>
           <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
         </div>

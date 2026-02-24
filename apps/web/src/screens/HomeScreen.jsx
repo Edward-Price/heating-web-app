@@ -19,6 +19,8 @@ export default function HomeScreen({
   menuOpen,
   setMenuOpen,
   toggleTheme,
+  debugLayoutEnabled,
+  toggleDebugLayout,
   theme,
   onLogout,
   contentRef,
@@ -362,6 +364,8 @@ export default function HomeScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        debugLayoutEnabled={debugLayoutEnabled}
+        toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
       />
