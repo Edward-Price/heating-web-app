@@ -13,12 +13,19 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
   const waterActive = Boolean(hotWaterState.hotWaterOn);
   const boilerActive = leftActive || rightActive || waterActive;
 
-  const leftPath = 'M 288 148 L 110 148 Q 96 148 96 134 L 96 44';
-  const rightPath = 'M 312 148 L 490 148 Q 504 148 504 134 L 504 44';
+  const leftPath = 'M 288 148 L 110 148 Q 96 148 96 134 L 96 62';
+  const rightPath = 'M 312 148 L 490 148 Q 504 148 504 134 L 504 62';
   const waterPath = 'M 300 168 C 300 204 300 236 300 270';
-  const zoneImageSrc = '/system-graphic/zone-radiator.png';
-  const boilerImageSrc = '/system-graphic/boiler.png';
-  const hotWaterImageSrc = '/system-graphic/hot-water-cylinder.png';
+  const upstairsZoneImageSrc = '/system-graphic/upstairs-radiator-new.png';
+  const downstairsZoneImageSrc = '/system-graphic/downstairs-radiator-new.png';
+  const fallbackZoneImageSrc = '/system-graphic/zone-radiator.png';
+  const boilerImageSrc = '/system-graphic/boiler-new.png';
+  const hotWaterImageSrc = '/system-graphic/hot-water-new.png';
+  const leftZoneLabel = leftZone && leftZone.name ? leftZone.name : '';
+  const rightZoneLabel = rightZone && rightZone.name ? rightZone.name : '';
+  const hotWaterLabel = hotWater && hotWater.name ? hotWater.name : 'Hot Water';
+  const leftZoneImageSrc = pickZoneImage(leftZone, upstairsZoneImageSrc, downstairsZoneImageSrc, fallbackZoneImageSrc);
+  const rightZoneImageSrc = pickZoneImage(rightZone, upstairsZoneImageSrc, downstairsZoneImageSrc, fallbackZoneImageSrc);
 
   function renderFlowParticles(path, color, active, durationSeconds = 1.8) {
     if (!active) return null;
@@ -40,27 +47,33 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
     );
   }
 
+  function pickZoneImage(zone, upstairsSrc, downstairsSrc, fallbackSrc) {
+    if (!zone || !zone.name) return fallbackSrc;
+    const name = String(zone.name).toLowerCase();
+    if (name.includes('upstairs') || name.includes('up stair') || name.includes('first floor')) return upstairsSrc;
+    if (name.includes('downstairs') || name.includes('down stair') || name.includes('ground floor')) return downstairsSrc;
+    return fallbackSrc;
+  }
+
   return (
     <div className="mb-3">
       <style>{`
-        @keyframes systemHotIcon {
+        @keyframes systemIconPulse {
           0%, 100% {
-            opacity: 0.92;
-            filter: drop-shadow(0 0 0 rgba(244, 63, 94, 0));
+            opacity: 0.94;
           }
           50% {
             opacity: 1;
-            filter: drop-shadow(0 0 10px rgba(244, 63, 94, 0.55));
           }
         }
-        @keyframes systemWaterIcon {
+        @keyframes systemHaloPulse {
           0%, 100% {
-            opacity: 0.92;
-            filter: drop-shadow(0 0 0 rgba(14, 165, 233, 0));
+            opacity: 0.26;
+            transform: translate(-50%, -50%) scale(0.9);
           }
           50% {
-            opacity: 1;
-            filter: drop-shadow(0 0 10px rgba(14, 165, 233, 0.55));
+            opacity: 0.48;
+            transform: translate(-50%, -50%) scale(1.08);
           }
         }
       `}</style>
@@ -80,40 +93,68 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
             ? 'text-amber-700 dark:text-amber-300'
             : 'text-slate-600 dark:text-slate-200'
         }`}>
+          {boilerActive ? (
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[70px] w-[70px] rounded-full bg-rose-500/50 blur-xl sm:h-[86px] sm:w-[86px]"
+              style={{ animation: 'systemHaloPulse 2.4s ease-in-out infinite' }}
+            />
+          ) : null}
           <img
             src={boilerImageSrc}
             alt=""
-            className="h-[72px] w-auto select-none object-contain sm:h-[86px]"
+            className="relative z-10 h-[72px] w-auto select-none object-contain sm:h-[86px]"
             draggable="false"
-            style={boilerActive ? { animation: 'systemHotIcon 2.4s ease-in-out infinite' } : undefined}
+            style={boilerActive ? { animation: 'systemIconPulse 2.4s ease-in-out infinite' } : undefined}
           />
         </div>
 
-        <div className={`absolute left-[16%] top-[14%] -translate-x-1/2 -translate-y-1/2 ${
+        <div className={`absolute left-[16%] top-[20%] -translate-x-1/2 -translate-y-1/2 ${
           leftActive
             ? 'text-rose-700 dark:text-rose-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
+          {leftZoneLabel ? (
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
+              {leftZoneLabel}
+            </span>
+          ) : null}
+          {leftActive ? (
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[56px] w-[56px] rounded-full bg-rose-500/45 blur-xl sm:h-[72px] sm:w-[72px]"
+              style={{ animation: 'systemHaloPulse 2.4s ease-in-out infinite' }}
+            />
+          ) : null}
           <img
-            src={zoneImageSrc}
+            src={leftZoneImageSrc}
             alt=""
-            className="h-[58px] w-auto select-none object-contain sm:h-[72px]"
+            className="relative z-10 h-[58px] w-auto select-none object-contain sm:h-[72px]"
             draggable="false"
-            style={leftActive ? { animation: 'systemHotIcon 2.4s ease-in-out infinite' } : undefined}
+            style={leftActive ? { animation: 'systemIconPulse 2.4s ease-in-out infinite' } : undefined}
           />
         </div>
 
-        <div className={`absolute left-[84%] top-[14%] -translate-x-1/2 -translate-y-1/2 ${
+        <div className={`absolute left-[84%] top-[20%] -translate-x-1/2 -translate-y-1/2 ${
           rightActive
             ? 'text-rose-700 dark:text-rose-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
+          {rightZoneLabel ? (
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
+              {rightZoneLabel}
+            </span>
+          ) : null}
+          {rightActive ? (
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[56px] w-[56px] rounded-full bg-rose-500/45 blur-xl sm:h-[72px] sm:w-[72px]"
+              style={{ animation: 'systemHaloPulse 2.4s ease-in-out infinite' }}
+            />
+          ) : null}
           <img
-            src={zoneImageSrc}
+            src={rightZoneImageSrc}
             alt=""
-            className="h-[58px] w-auto select-none object-contain sm:h-[72px]"
+            className="relative z-10 h-[58px] w-auto select-none object-contain sm:h-[72px]"
             draggable="false"
-            style={rightActive ? { animation: 'systemHotIcon 2.4s ease-in-out infinite' } : undefined}
+            style={rightActive ? { animation: 'systemIconPulse 2.4s ease-in-out infinite' } : undefined}
           />
         </div>
 
@@ -122,12 +163,21 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
             ? 'text-sky-700 dark:text-sky-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
+          <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
+            {hotWaterLabel}
+          </span>
+          {waterActive ? (
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[56px] w-[56px] rounded-full bg-sky-400/45 blur-xl sm:h-[72px] sm:w-[72px]"
+              style={{ animation: 'systemHaloPulse 2.5s ease-in-out infinite' }}
+            />
+          ) : null}
           <img
             src={hotWaterImageSrc}
             alt=""
-            className="h-[58px] w-auto select-none object-contain sm:h-[72px]"
+            className="relative z-10 h-[58px] w-auto select-none object-contain sm:h-[72px]"
             draggable="false"
-            style={waterActive ? { animation: 'systemWaterIcon 2.5s ease-in-out infinite' } : undefined}
+            style={waterActive ? { animation: 'systemIconPulse 2.5s ease-in-out infinite' } : undefined}
           />
         </div>
       </div>
