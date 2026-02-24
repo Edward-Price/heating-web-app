@@ -38,7 +38,7 @@ export default function ScheduleScreen({
   onLogout,
 }) {
   return (
-    <main className="mx-auto flex h-[var(--app-height)] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
+    <main className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
       <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
         <div className="mb-1 flex items-center justify-between">
           <Button

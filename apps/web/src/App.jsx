@@ -190,11 +190,6 @@ export default function App() {
     localStorage.setItem(DEBUG_LAYOUT_STORAGE_KEY, debugLayoutEnabled ? '1' : '0');
   }, [debugLayoutEnabled]);
 
-  const setAppHeight = useCallback(() => {
-    const viewportHeight = window.visualViewport?.height || window.innerHeight;
-    document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
-  }, []);
-
   const collectLayoutSnapshot = useCallback(() => {
     if (!debugLayoutEnabled) return null;
 
@@ -223,7 +218,6 @@ export default function App() {
     const main = document.querySelector('main');
     const nav = document.querySelector('nav');
     const root = document.getElementById('root');
-    const htmlStyle = getComputedStyle(document.documentElement);
     const snapshot = {
       timestamp: new Date().toISOString(),
       activeTab,
@@ -234,7 +228,6 @@ export default function App() {
       visualViewportHeight: window.visualViewport?.height ?? null,
       visualViewportOffsetTop: window.visualViewport?.offsetTop ?? null,
       docClientHeight: document.documentElement.clientHeight,
-      appHeightVar: htmlStyle.getPropertyValue('--app-height').trim(),
       safeAreaTop,
       safeAreaBottom,
       mainRect: toRect(main),
@@ -246,23 +239,9 @@ export default function App() {
   }, [activeTab, debugLayoutEnabled]);
 
   useEffect(() => {
-    setAppHeight();
-    window.addEventListener('resize', setAppHeight);
-    window.addEventListener('orientationchange', setAppHeight);
-    window.visualViewport?.addEventListener('resize', setAppHeight);
-
-    return () => {
-      window.removeEventListener('resize', setAppHeight);
-      window.removeEventListener('orientationchange', setAppHeight);
-      window.visualViewport?.removeEventListener('resize', setAppHeight);
-    };
-  }, [setAppHeight]);
-
-  useEffect(() => {
     if (!debugLayoutEnabled) return undefined;
 
     const refresh = () => {
-      setAppHeight();
       window.requestAnimationFrame(() => {
         collectLayoutSnapshot();
       });
@@ -284,7 +263,7 @@ export default function App() {
       window.removeEventListener('visibilitychange', refresh);
       window.visualViewport?.removeEventListener('resize', refresh);
     };
-  }, [collectLayoutSnapshot, debugLayoutEnabled, setAppHeight]);
+  }, [collectLayoutSnapshot, debugLayoutEnabled]);
 
   useEffect(() => {
     if (!layoutCopyStatus) return undefined;
@@ -773,7 +752,6 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                setAppHeight();
                 void collectLayoutSnapshot();
               }}
               className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] font-semibold dark:border-slate-600"
@@ -801,7 +779,6 @@ export default function App() {
                 vvHeight: data.visualViewportHeight,
                 vvTop: data.visualViewportOffsetTop,
                 docClientHeight: data.docClientHeight,
-                appHeightVar: data.appHeightVar,
                 safeTop: data.safeAreaTop,
                 safeBottom: data.safeAreaBottom,
                 mainRect: data.mainRect,
@@ -817,7 +794,7 @@ export default function App() {
   if (!loggedIn) {
     return (
       <>
-        <main className="mx-auto h-[var(--app-height)] max-w-5xl overflow-y-auto px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
+        <main className="mx-auto h-full max-w-5xl overflow-y-auto px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:pt-8">
           <header className="mb-4 flex items-center justify-between">
             <h1 className="text-2xl font-bold">Heating Web App</h1>
           </header>
