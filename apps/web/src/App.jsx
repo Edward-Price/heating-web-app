@@ -631,7 +631,7 @@ export default function App() {
 
   if (!loggedIn) {
     return (
-      <main className="mx-auto h-[100svh] max-w-5xl overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+6rem)] pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
+      <main className="mx-auto h-[100dvh] max-w-5xl overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+6rem)] pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
         <header className="mb-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold">Heating Web App</h1>
         </header>
