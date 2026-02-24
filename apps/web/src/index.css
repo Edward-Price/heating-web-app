@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --app-height: 100vh;
+}
+
 html,
 body,
 #root {
@@ -37,7 +41,7 @@ html.dark body {
 }
 
 #root {
-  overflow: visible;
+  overflow: hidden;
 }
 
 html.dark .text-foreground {
