@@ -460,7 +460,7 @@ export default function App() {
     ];
 
     return (
-      <nav className="fixed inset-x-0 bottom-0 z-50 overflow-visible border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
+      <nav className="fixed inset-x-0 bottom-0 z-50 overflow-visible border-t border-border/80 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
         <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 pb-2 pt-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
