@@ -103,7 +103,7 @@ export default function HomeScreen({
     };
 
     return (
-      <main className="mx-auto flex min-h-[100svh] h-[100dvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
+      <main className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
         <div className="min-h-0 flex-1 overflow-y-auto pb-4">
           <div className="mb-3">
             <div className="mb-2 flex items-center gap-2">
@@ -219,7 +219,7 @@ export default function HomeScreen({
   }
 
   return (
-    <main className="mx-auto flex min-h-[100svh] h-[100dvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
+    <main className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:p-8">
       <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
         <div className="mb-1 flex items-center justify-between">
           <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
