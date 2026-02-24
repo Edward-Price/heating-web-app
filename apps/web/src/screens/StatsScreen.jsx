@@ -48,7 +48,7 @@ export default function StatsScreen({
 
       <div
         ref={statsContentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-24"
         onTouchStart={onStatsTouchStart}
         onTouchMove={onStatsTouchMove}
         onTouchEnd={onStatsTouchEnd}
