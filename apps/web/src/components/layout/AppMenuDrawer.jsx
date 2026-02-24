@@ -18,7 +18,7 @@ export default function AppMenuDrawer({
         className="fixed inset-0 z-40 bg-black/30"
         onClick={() => setMenuOpen(false)}
       />
-      <aside className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-xs overflow-y-auto border-r border-border bg-card px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+0.5rem)] text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+      <aside className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-xs overflow-y-auto border-r border-border bg-card p-4 text-foreground shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
         <div className="mb-4 flex items-center justify-between">
           <strong>Menu</strong>
           <Button size="icon" variant="ghost" onClick={() => setMenuOpen(false)}><X className="h-4 w-4" /></Button>
