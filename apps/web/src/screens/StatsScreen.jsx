@@ -120,8 +120,12 @@ export default function StatsScreen({
             const minVal = span < 0.05 ? valueMin - 0.1 : valueMin;
             const maxVal = span < 0.05 ? valueMax + 0.1 : valueMax;
             const center = (minVal + maxVal) / 2;
+            const snapToHalf = (value) => Math.round(Number(value) * 2) / 2;
+            const axisTopLabel = snapToHalf(maxVal).toFixed(1);
+            const axisMidLabel = snapToHalf(center).toFixed(1);
+            const axisBottomLabel = snapToHalf(minVal).toFixed(1);
             const graphW = 720;
-            const graphH = 220;
+            const graphH = 320;
             const graphGridTopY = 2;
             const graphGridMidY = Math.round(graphH / 2);
             const graphGridBottomY = graphH - 2;
@@ -218,24 +222,17 @@ export default function StatsScreen({
                   </div>
                 </div>
 
-                <div className="mt-3 space-y-2">
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/40">
-                      <p className="text-slate-500 dark:text-slate-400">Min</p>
-                      <p className="font-semibold text-slate-700 dark:text-slate-100">{Number(minVal).toFixed(1)}°</p>
+                <div className="mt-3 rounded-xl bg-slate-50/85 p-2 dark:bg-slate-900/50">
+                  <div className="grid grid-cols-[auto,1fr] items-stretch gap-x-2">
+                    <div className="flex h-full flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>{`${axisTopLabel}°`}</span>
+                      <span>{`${axisMidLabel}°`}</span>
+                      <span>{`${axisBottomLabel}°`}</span>
                     </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/40">
-                      <p className="text-slate-500 dark:text-slate-400">Avg</p>
-                      <p className="font-semibold text-slate-700 dark:text-slate-100">{Number(center).toFixed(1)}°</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/40">
-                      <p className="text-slate-500 dark:text-slate-400">Max</p>
-                      <p className="font-semibold text-slate-700 dark:text-slate-100">{Number(maxVal).toFixed(1)}°</p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 bg-white/70 p-2 dark:border-slate-700 dark:bg-slate-900/50">
-                    <div className="h-44 w-full"
+                    <div>
+                      <div
+                      className="w-full"
+                      style={{ aspectRatio: `${graphW} / ${graphH}` }}
                       onMouseMove={(event) => {
                         setStatsHoverFromClientX(
                           zone.id,
@@ -323,10 +320,11 @@ export default function StatsScreen({
                         ) : null}
                       </svg>
                     </div>
-                    <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>{formatStatsAxisLabel(firstTs, config.range)}</span>
-                      <span>{formatStatsAxisLabel(midTs, config.range)}</span>
-                      <span>{formatStatsAxisLabel(lastTs, config.range)}</span>
+                      <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>{formatStatsAxisLabel(firstTs, config.range)}</span>
+                        <span>{formatStatsAxisLabel(midTs, config.range)}</span>
+                        <span>{formatStatsAxisLabel(lastTs, config.range)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
