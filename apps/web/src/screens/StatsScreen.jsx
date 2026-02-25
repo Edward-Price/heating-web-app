@@ -41,7 +41,7 @@ export default function StatsScreen({
   const statsRingDashOffset = statsRingCircumference * (1 - statsPullProgress);
 
   return (
-    <main className="mx-auto flex h-full min-h-[100svh] max-w-5xl flex-col overflow-hidden px-4 pb-4 md:px-8 md:pb-8">
+    <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
       <header className="fixed inset-x-0 top-0 z-30">
         <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
           <div className="mb-1 flex items-center justify-between">
@@ -52,7 +52,7 @@ export default function StatsScreen({
 
       <div
         ref={statsContentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[calc(env(safe-area-inset-bottom)+7rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)]"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-28 pt-[calc(env(safe-area-inset-top)+4.75rem)]"
         onTouchStart={onStatsTouchStart}
         onTouchMove={onStatsTouchMove}
         onTouchEnd={onStatsTouchEnd}

@@ -5,7 +5,12 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  height: 100lvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  min-height: 100lvh;
 }
 
 html {
@@ -14,8 +19,7 @@ html {
 
 body {
   margin: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   color: theme('colors.foreground');
   background-color: #f4f7fc;
   background: linear-gradient(180deg, #f4f7fc 0%, #f6f9fc 35%, #f6f9fc 100%);
@@ -35,7 +39,7 @@ html.dark body {
 }
 
 #root {
-  overflow: visible;
+  overflow: hidden;
 }
 
 html.dark .text-foreground {

@@ -557,7 +557,7 @@ export default function App() {
 
     return (
       <nav className="fixed inset-x-0 bottom-0 z-50 overflow-visible border-t border-border/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
-        <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-1">
+        <div className="mx-auto grid max-w-5xl grid-cols-3 px-3 pb-2 pt-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const selected = activeTab === tab.key;
@@ -794,7 +794,7 @@ export default function App() {
   if (!loggedIn) {
     return (
       <>
-        <main className="mx-auto h-full min-h-[100svh] max-w-5xl overflow-y-auto px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8 md:pb-8">
+        <main className="mx-auto h-[100lvh] max-w-5xl overflow-y-auto px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8">
           <header className="mb-4 flex items-center justify-between">
             <h1 className="text-2xl font-bold">Heating Web App</h1>
           </header>
