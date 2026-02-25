@@ -221,20 +221,22 @@ export default function HomeScreen({
   }
 
   return (
-    <main className="mx-auto flex h-full min-h-[100svh] max-w-5xl flex-col overflow-hidden px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8 md:pb-8">
-      <header className="sticky top-0 z-10 mb-3 shrink-0 pb-2">
-        <div className="mb-1 flex items-center justify-between">
-          <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
-            <span>{connection.label}</span>
+    <main className="mx-auto flex h-full min-h-[100svh] max-w-5xl flex-col overflow-hidden px-4 pb-4 md:px-8 md:pb-8">
+      <header className="fixed inset-x-0 top-0 z-30">
+        <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
+          <div className="mb-1 flex items-center justify-between">
+            <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
+            <div className="flex items-center gap-2 text-sm text-muted">
+              <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
+              <span>{connection.label}</span>
+            </div>
           </div>
         </div>
       </header>
 
       <div
         ref={contentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[calc(env(safe-area-inset-bottom)+7rem)]"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[calc(env(safe-area-inset-bottom)+7rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)]"
         onTouchStart={onContentTouchStart}
         onTouchMove={onContentTouchMove}
         onTouchEnd={onContentTouchEnd}

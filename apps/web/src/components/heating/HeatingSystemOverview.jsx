@@ -24,6 +24,9 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
   const leftZoneLabel = leftZone && leftZone.name ? leftZone.name : '';
   const rightZoneLabel = rightZone && rightZone.name ? rightZone.name : '';
   const hotWaterLabel = hotWater && hotWater.name ? hotWater.name : 'Hot Water';
+  const leftZoneTemp = Number.isFinite(Number(leftState.currentTemp)) ? `${Number(leftState.currentTemp).toFixed(1)}°C` : '--.-°C';
+  const rightZoneTemp = Number.isFinite(Number(rightState.currentTemp)) ? `${Number(rightState.currentTemp).toFixed(1)}°C` : '--.-°C';
+  const hotWaterStatusLabel = waterActive ? 'On' : 'Off';
   const leftZoneImageSrc = pickZoneImage(leftZone, upstairsZoneImageSrc, downstairsZoneImageSrc, fallbackZoneImageSrc);
   const rightZoneImageSrc = pickZoneImage(rightZone, upstairsZoneImageSrc, downstairsZoneImageSrc, fallbackZoneImageSrc);
 
@@ -56,7 +59,7 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
   }
 
   return (
-    <div className="mb-3">
+    <div className="mb-6">
       <style>{`
         @keyframes systemIconPulse {
           0%, 100% {
@@ -108,14 +111,19 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
           />
         </div>
 
-        <div className={`absolute left-[16%] top-[20%] -translate-x-1/2 -translate-y-1/2 ${
+        <div className={`absolute left-[16%] top-[26%] -translate-x-1/2 -translate-y-1/2 ${
           leftActive
             ? 'text-rose-700 dark:text-rose-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
           {leftZoneLabel ? (
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
-              {leftZoneLabel}
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-4 -translate-x-1/2 text-center text-slate-500 dark:text-slate-300">
+              <span className="block whitespace-nowrap text-[10px] font-medium leading-none sm:text-xs">
+                {leftZoneLabel}
+              </span>
+              <span className="mt-0.5 block whitespace-nowrap text-sm font-semibold leading-tight sm:text-base">
+                {leftZoneTemp}
+              </span>
             </span>
           ) : null}
           {leftActive ? (
@@ -133,14 +141,19 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
           />
         </div>
 
-        <div className={`absolute left-[84%] top-[20%] -translate-x-1/2 -translate-y-1/2 ${
+        <div className={`absolute left-[84%] top-[26%] -translate-x-1/2 -translate-y-1/2 ${
           rightActive
             ? 'text-rose-700 dark:text-rose-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
           {rightZoneLabel ? (
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
-              {rightZoneLabel}
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-4 -translate-x-1/2 text-center text-slate-500 dark:text-slate-300">
+              <span className="block whitespace-nowrap text-[10px] font-medium leading-none sm:text-xs">
+                {rightZoneLabel}
+              </span>
+              <span className="mt-0.5 block whitespace-nowrap text-sm font-semibold leading-tight sm:text-base">
+                {rightZoneTemp}
+              </span>
             </span>
           ) : null}
           {rightActive ? (
@@ -158,13 +171,18 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
           />
         </div>
 
-        <div className={`absolute bottom-[2%] left-1/2 -translate-x-1/2 sm:bottom-[8%] ${
+        <div className={`absolute bottom-[18%] left-1/2 -translate-x-1/2 sm:bottom-[22%] ${
           waterActive
             ? 'text-sky-700 dark:text-sky-300'
             : 'text-slate-700 dark:text-slate-200'
         }`}>
-          <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-slate-500 dark:text-slate-300 sm:text-xs">
-            {hotWaterLabel}
+          <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-3.5 -translate-x-1/2 text-center text-slate-500 dark:text-slate-300">
+            <span className="block whitespace-nowrap text-[10px] font-medium leading-none sm:text-xs">
+              {hotWaterLabel}
+            </span>
+            <span className="mt-0.5 block whitespace-nowrap text-sm font-semibold leading-tight sm:text-base">
+              {hotWaterStatusLabel}
+            </span>
           </span>
           {waterActive ? (
             <span
