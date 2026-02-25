@@ -62,7 +62,7 @@ export default function ScheduleScreen({
         </div>
       </header>
 
-      <div ref={scheduleScrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-4">
+      <div ref={scheduleScrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[calc(env(safe-area-inset-bottom)+7rem)]">
         {scheduleZoneId === null ? (
           <section className="grid gap-3">
             {scheduleDevices.map((zone) => (

@@ -106,7 +106,7 @@ export default function HomeScreen({
 
     return (
       <main className="mx-auto flex h-full min-h-[100svh] max-w-5xl flex-col overflow-hidden p-4 md:p-8">
-        <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom)+7rem)]">
           <div className="mb-3">
             <div className="mb-2 flex items-center gap-2">
               <Button size="icon" variant="outline" onClick={() => setSelectedZoneId(null)} aria-label="Go back">‹</Button>
@@ -234,7 +234,7 @@ export default function HomeScreen({
 
       <div
         ref={contentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-4"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[calc(env(safe-area-inset-bottom)+7rem)]"
         onTouchStart={onContentTouchStart}
         onTouchMove={onContentTouchMove}
         onTouchEnd={onContentTouchEnd}
