@@ -15,7 +15,7 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
 
   const leftPath = 'M 288 148 L 110 148 Q 96 148 96 134 L 96 62';
   const rightPath = 'M 312 148 L 490 148 Q 504 148 504 134 L 504 62';
-  const waterPath = 'M 300 168 C 300 204 300 236 300 270';
+  const waterPath = 'M 300 168 C 300 214 300 256 300 302';
   const upstairsZoneImageSrc = '/system-graphic/upstairs-radiator-new.png';
   const downstairsZoneImageSrc = '/system-graphic/downstairs-radiator-new.png';
   const fallbackZoneImageSrc = '/system-graphic/zone-radiator.png';
@@ -59,7 +59,7 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
   }
 
   return (
-    <div className="mb-6">
+    <div className="mb-14">
       <style>{`
         @keyframes systemIconPulse {
           0%, 100% {
@@ -171,7 +171,7 @@ export default function HeatingSystemOverview({ zones, hotWater, stateByDeviceId
           />
         </div>
 
-        <div className={`absolute bottom-[18%] left-1/2 -translate-x-1/2 sm:bottom-[22%] ${
+        <div className={`absolute bottom-[4%] left-1/2 -translate-x-1/2 sm:bottom-[8%] ${
           waterActive
             ? 'text-sky-700 dark:text-sky-300'
             : 'text-slate-700 dark:text-slate-200'
