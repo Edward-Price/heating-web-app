@@ -30,6 +30,7 @@ const {
   writeZoneTargetTemp,
   setHotWaterBoost,
   getZoneSchedule,
+  setZoneSchedule,
 } = require('./providerClient');
 const { sendJson, readJson } = require('./http');
 const { appendSnapshot, queryZoneSeries } = require('./statsStore');
@@ -357,6 +358,65 @@ function parseSchedule(providerResponse) {
   return { scheduleId, week: [] };
 }
 
+function toProviderScheduleTemp(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 180;
+  if (Math.abs(n) <= 1) return Math.round(n);
+  return Math.round(n * 10);
+}
+
+function normalizePeriodsForWrite(periods) {
+  const normalized = Array.isArray(periods)
+    ? periods
+        .map((period) => ({
+          start: Number(period && period.start),
+          end: Number(period && period.end),
+          temp: Number(period && period.temp),
+        }))
+        .filter((period) => Number.isFinite(period.start) && Number.isFinite(period.end) && Number.isFinite(period.temp))
+        .map((period) => ({
+          start: Math.max(0, Math.min(24, period.start)),
+          end: Math.max(0, Math.min(24, period.end)),
+          temp: period.temp,
+        }))
+        .filter((period) => period.end > period.start)
+        .sort((a, b) => a.start - b.start)
+    : [];
+
+  if (!normalized.length) {
+    return [{ O: 0, T: 180 }];
+  }
+
+  const entries = [];
+  for (const period of normalized) {
+    const offset = Math.max(0, Math.min(1440, Math.round(period.start * 60)));
+    if (!entries.length || entries[entries.length - 1].O !== offset) {
+      entries.push({ O: offset, T: toProviderScheduleTemp(period.temp) });
+    } else {
+      entries[entries.length - 1].T = toProviderScheduleTemp(period.temp);
+    }
+  }
+
+  if (!entries.length) {
+    return [{ O: 0, T: 180 }];
+  }
+  if (entries[0].O > 0) {
+    entries.unshift({ O: 0, T: entries[0].T });
+  }
+  return entries;
+}
+
+function buildProviderWeekPayload(week) {
+  return Array.from({ length: 7 }, (_v, dayIndex) => {
+    const day = Array.isArray(week)
+      ? week.find((item) => Number(item && item.dayIndex) === dayIndex)
+      : null;
+    return {
+      D: normalizePeriodsForWrite(day && day.periods),
+    };
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const reqUrl = req.url || '/';
@@ -473,6 +533,63 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         zoneId,
+        scheduleId: parsed.scheduleId,
+        week: parsed.week,
+        providerResponse,
+      });
+      return;
+    }
+
+    const zoneScheduleDayWriteMatch = pathOnly.match(/^\/zones\/(\d+)\/schedule\/day\/(\d+)$/);
+    if (req.method === 'PUT' && zoneScheduleDayWriteMatch) {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+
+      const zoneId = Number(zoneScheduleDayWriteMatch[1]);
+      const dayIndex = Number(zoneScheduleDayWriteMatch[2]);
+      if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
+        sendJson(res, 400, { ok: false, error: 'dayIndex must be between 0 and 6' });
+        return;
+      }
+
+      const body = await readJson(req);
+      let scheduleId = Number(body.scheduleId);
+      let week = Array.isArray(body.week) ? body.week : null;
+
+      if (!week || !Number.isFinite(scheduleId)) {
+        const currentResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
+        const currentParsed = parseSchedule(currentResponse);
+        if (!week) {
+          week = currentParsed.week;
+        }
+        if (!Number.isFinite(scheduleId)) {
+          scheduleId = Number(currentParsed.scheduleId);
+        }
+      }
+
+      if (!Array.isArray(week) || !Number.isFinite(scheduleId)) {
+        sendJson(res, 400, { ok: false, error: 'Unable to resolve schedule week/scheduleId for save' });
+        return;
+      }
+
+      const payload = [{ I: scheduleId, D: buildProviderWeekPayload(week) }];
+      const providerResponse = await setZoneSchedule(auth.session.providerSession, auth.session.seqState, payload);
+      const providerError = extractProviderError(providerResponse);
+      if (providerError) {
+        sendJson(res, 502, {
+          ok: false,
+          error: `Provider rejected schedule write (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          providerResponse,
+        });
+        return;
+      }
+
+      const updatedProviderResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
+      const parsed = parseSchedule(updatedProviderResponse);
+      sendJson(res, 200, {
+        ok: true,
+        zoneId,
+        dayIndex,
         scheduleId: parsed.scheduleId,
         week: parsed.week,
         providerResponse,

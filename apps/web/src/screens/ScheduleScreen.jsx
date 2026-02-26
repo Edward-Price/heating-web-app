@@ -27,6 +27,11 @@ export default function ScheduleScreen({
   adjustScheduleTemp,
   removeSchedulePeriod,
   addSchedulePeriod,
+  setSchedulePeriodStart,
+  setSchedulePeriodEnd,
+  saveScheduleDay,
+  isScheduleSaving,
+  hasUnsavedScheduleChanges,
   getDayPeriods,
   renderBottomNav,
   menuOpen,
@@ -37,6 +42,10 @@ export default function ScheduleScreen({
   theme,
   onLogout,
 }) {
+  const TIME_STEPS = Array.from({ length: 49 }, (_, idx) => idx * 0.5);
+  const toTimeOptions = (minValue, maxValue) =>
+    TIME_STEPS.filter((value) => value >= minValue - 0.001 && value <= maxValue + 0.001);
+
   return (
     <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
       <header className="fixed inset-x-0 top-0 z-30">
@@ -192,21 +201,28 @@ export default function ScheduleScreen({
               </div>
 
               <div className="mt-1">
-                <div className="relative flex h-12 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800/80">
+                <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-foreground">
                   {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-                    .slice()
-                    .sort((a, b) => a.start - b.start)
-                    .map((period, idx) => {
-                      const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? '#22c55e' : '#94a3b8') : getTempScaleColor(period.temp);
+                    .map((period, originalIndex) => ({ period, originalIndex }))
+                    .sort((a, b) => a.period.start - b.period.start)
+                    .map(({ period, originalIndex }) => (
+                      <span key={`timeline-label-${originalIndex}`}>
+                        {formatScheduleValue(period, scheduleIsBinary)} ({formatHour(period.start)}-{formatHour(period.end)})
+                      </span>
+                    ))}
+                </div>
+                <div className="relative flex h-12 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                  {getDayPeriods(scheduleZoneId, scheduleDayIndex)
+                    .map((period, originalIndex) => ({ period, originalIndex }))
+                    .sort((a, b) => a.period.start - b.period.start)
+                    .map(({ period, originalIndex }) => {
                       const widthPercent = ((period.end - period.start) / 24) * 100;
                       return (
                         <div
-                          key={idx}
-                          className="flex items-center justify-center text-sm font-bold text-white"
-                          style={{ width: `${widthPercent}%`, backgroundColor: barColor }}
-                        >
-                          {formatScheduleValue(period, scheduleIsBinary)}
-                        </div>
+                          key={`timeline-segment-${originalIndex}`}
+                          className="flex items-center justify-center border-r border-slate-200 text-sm font-semibold text-foreground last:border-r-0 dark:border-slate-700"
+                          style={{ width: `${widthPercent}%` }}
+                        />
                       );
                     })}
                 </div>
@@ -222,25 +238,54 @@ export default function ScheduleScreen({
             </Card>
 
             {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-              .slice()
-              .sort((a, b) => a.start - b.start)
-              .map((period, idx) => {
-                const color = SCHEDULE_COLORS[period.colorIndex % SCHEDULE_COLORS.length];
-                const barColor = scheduleIsBinary ? (Number(period.temp) >= 0.5 ? '#22c55e' : '#94a3b8') : getTempScaleColor(period.temp);
+              .map((period, originalIndex) => ({ period, originalIndex }))
+              .sort((a, b) => a.period.start - b.period.start)
+              .map(({ period, originalIndex }, sortedIndex, sortedPeriods) => {
+                const previousEnd = sortedIndex === 0 ? 0 : sortedPeriods[sortedIndex - 1].period.end;
+                const nextStart = sortedIndex === sortedPeriods.length - 1 ? 24 : sortedPeriods[sortedIndex + 1].period.start;
+                const startOptions = toTimeOptions(previousEnd, period.end - 0.5);
+                const endOptions = toTimeOptions(period.start + 0.5, nextStart);
                 return (
-                  <Card key={`${period.start}-${period.end}-${idx}`} className={`${color.bg}`}>
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-1.5 rounded-full" style={{ backgroundColor: barColor }} />
-                      <div className="min-w-[110px] text-base font-semibold text-slate-600 dark:text-slate-200">
-                        {formatHour(period.start)} - {formatHour(period.end)}
+                  <Card key={`${period.start}-${period.end}-${originalIndex}`} className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    <div className="grid gap-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                          Start
+                          <select
+                            className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground dark:bg-slate-800"
+                            value={String(period.start)}
+                            onChange={(event) => setSchedulePeriodStart(scheduleZoneId, scheduleDayIndex, originalIndex, Number(event.target.value))}
+                          >
+                            {startOptions.map((value) => (
+                              <option key={`start-${originalIndex}-${value}`} value={value}>
+                                {formatHour(value)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                          End
+                          <select
+                            className="h-10 rounded-md border border-border bg-white px-3 text-sm text-foreground dark:bg-slate-800"
+                            value={String(period.end)}
+                            onChange={(event) => setSchedulePeriodEnd(scheduleZoneId, scheduleDayIndex, originalIndex, Number(event.target.value))}
+                          >
+                            {endOptions.map((value) => (
+                              <option key={`end-${originalIndex}-${value}`} value={value}>
+                                {formatHour(value)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
-                      <div className="ml-auto flex items-center gap-2">
+
+                      <div className="flex items-center gap-2">
                         {scheduleIsBinary ? (
                           <button
                             type="button"
-                            className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             onClick={() =>
-                              setSchedulePeriodValue(scheduleZoneId, scheduleDayIndex, idx, Number(period.temp) >= 0.5 ? 0 : 1)
+                              setSchedulePeriodValue(scheduleZoneId, scheduleDayIndex, originalIndex, Number(period.temp) >= 0.5 ? 0 : 1)
                             }
                           >
                             {Number(period.temp) >= 0.5 ? 'Set Off' : 'Set On'}
@@ -249,18 +294,18 @@ export default function ScheduleScreen({
                           <>
                             <button
                               type="button"
-                              className="grid h-9 w-9 place-items-center rounded-full bg-white text-lg font-bold text-slate-500"
-                              onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, idx, -0.5)}
+                              className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-lg font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, originalIndex, -0.5)}
                             >
                               −
                             </button>
-                            <div className={`min-w-[68px] text-center text-xl font-bold ${color.text}`}>
+                            <div className="min-w-[68px] text-center text-xl font-bold text-foreground">
                               {formatScheduleValue(period, scheduleIsBinary)}
                             </div>
                             <button
                               type="button"
-                              className="grid h-9 w-9 place-items-center rounded-full bg-white text-lg font-bold text-slate-500"
-                              onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, idx, 0.5)}
+                              className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-lg font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              onClick={() => adjustScheduleTemp(scheduleZoneId, scheduleDayIndex, originalIndex, 0.5)}
                             >
                               +
                             </button>
@@ -268,8 +313,8 @@ export default function ScheduleScreen({
                         )}
                         <button
                           type="button"
-                          className="ml-1 grid h-9 w-9 place-items-center rounded-full bg-white text-base font-bold text-slate-400"
-                          onClick={() => removeSchedulePeriod(scheduleZoneId, scheduleDayIndex, idx)}
+                          className="ml-auto grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-base font-bold text-slate-400 dark:border-slate-700 dark:bg-slate-800"
+                          onClick={() => removeSchedulePeriod(scheduleZoneId, scheduleDayIndex, originalIndex)}
                           aria-label="Delete period"
                         >
                           ×
@@ -280,9 +325,25 @@ export default function ScheduleScreen({
                 );
               })}
 
-            <Button variant="outline" onClick={() => addSchedulePeriod(scheduleZoneId, scheduleDayIndex)}>
-              + Add period
-            </Button>
+            <div className="grid gap-2">
+              {hasUnsavedScheduleChanges ? (
+                <p className="text-xs font-medium text-amber-600 dark:text-amber-400">Unsaved changes</p>
+              ) : (
+                <p className="text-xs font-medium text-muted">All changes saved</p>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => addSchedulePeriod(scheduleZoneId, scheduleDayIndex)}
+              >
+                + Add period
+              </Button>
+              <Button
+                onClick={() => saveScheduleDay(scheduleZoneId, scheduleDayIndex)}
+                disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
+              >
+                {isScheduleSaving ? 'Saving...' : 'Save day'}
+              </Button>
+            </div>
           </section>
         )}
       </div>

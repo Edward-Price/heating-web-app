@@ -239,6 +239,14 @@ async function getZoneSchedule(providerSession, state, zoneIdOrIndex) {
   throw lastErr || new Error('Provider schedule read failed');
 }
 
+async function setZoneSchedule(providerSession, state, schedulePayload) {
+  return sendProviderRequest(providerSession, state, {
+    SI: 17,
+    HI: 21,
+    payload: schedulePayload,
+  });
+}
+
 module.exports = {
   login,
   getDevices,
@@ -246,4 +254,5 @@ module.exports = {
   writeZoneTargetTemp,
   setHotWaterBoost,
   getZoneSchedule,
+  setZoneSchedule,
 };

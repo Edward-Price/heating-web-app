@@ -1,4 +1,5 @@
-import { Flame, Menu, Snowflake } from 'lucide-react';
+import { useRef } from 'react';
+import { Menu } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import HeatingSystemOverview from '../components/heating/HeatingSystemOverview';
@@ -38,7 +39,11 @@ export default function HomeScreen({
   formatTemperature,
   hotWater,
   writeHotWater,
+  onOpenZoneSchedule,
 }) {
+  const detailSwipeStartRef = useRef(null);
+  const detailSwipeTrackingRef = useRef(false);
+
   if (selectedZone) {
     const zone = selectedZone;
     const state = zoneState(stateByDeviceId, zone.id);
@@ -76,6 +81,31 @@ export default function HomeScreen({
         return Math.max(minTemp, Math.min(maxTemp, next));
       });
     };
+    const onDetailTouchStart = (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      detailSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+      detailSwipeTrackingRef.current = touch.clientX <= 24;
+    };
+
+    const onDetailTouchMove = (event) => {
+      if (!detailSwipeTrackingRef.current || !detailSwipeStartRef.current) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - detailSwipeStartRef.current.x;
+      const dy = touch.clientY - detailSwipeStartRef.current.y;
+      const isBackSwipe = dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.2;
+      if (isBackSwipe) {
+        detailSwipeTrackingRef.current = false;
+        detailSwipeStartRef.current = null;
+        setSelectedZoneId(null);
+      }
+    };
+
+    const onDetailTouchEnd = () => {
+      detailSwipeTrackingRef.current = false;
+      detailSwipeStartRef.current = null;
+    };
 
     const resolvePoint = (event, element) => {
       const rect = element.getBoundingClientRect();
@@ -106,27 +136,27 @@ export default function HomeScreen({
 
     return (
       <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8">
-        <div className="min-h-0 flex-1 overflow-y-auto pb-40">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto pb-40"
+          onTouchStart={onDetailTouchStart}
+          onTouchMove={onDetailTouchMove}
+          onTouchEnd={onDetailTouchEnd}
+          onTouchCancel={onDetailTouchEnd}
+        >
           <div className="mb-3">
             <div className="mb-2 flex items-center gap-2">
               <Button size="icon" variant="outline" onClick={() => setSelectedZoneId(null)} aria-label="Go back">‹</Button>
               <h2 className="text-3xl font-bold tracking-tight text-foreground">{zone.name}</h2>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Card className="py-3">
-                <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                  <span>🌡️</span>
-                  <span>Current</span>
-                </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Current</div>
                 <div className="text-4xl font-bold tracking-tight text-foreground">{current}</div>
-              </Card>
-              <Card className="py-3">
-                <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                  <span>🎯</span>
-                  <span>Target</span>
-                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Target</div>
                 <div className="text-4xl font-bold tracking-tight text-foreground">{formatTemperature(state.targetTemp)}</div>
-              </Card>
+              </div>
             </div>
           </div>
 
@@ -196,7 +226,7 @@ export default function HomeScreen({
 
             <div className="flex justify-center">
               <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
-                {heating ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
+                <span className={`h-2.5 w-2.5 rounded-full ${heating ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                 {heating ? 'Heating' : 'Idle'}
               </div>
             </div>
@@ -211,6 +241,17 @@ export default function HomeScreen({
             >
               {status.toLowerCase().includes('setting') ? 'Setting...' : 'Set temperature'}
             </button>
+            <Button
+              variant="outline"
+              className="mt-2 h-11 w-full"
+              onClick={() => {
+                if (typeof onOpenZoneSchedule === 'function') {
+                  onOpenZoneSchedule(zone.id);
+                }
+              }}
+            >
+              View schedule
+            </Button>
           </div>
           <p className="mt-3 text-sm text-muted">{status}</p>
         </div>
@@ -316,7 +357,7 @@ export default function HomeScreen({
                           {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
                         </div>
                         <div className="flex items-center gap-1.5 text-sm text-muted">
-                          {heatingOn ? <Flame className="h-4 w-4 text-rose-500" /> : <Snowflake className="h-4 w-4 text-sky-500" />}
+                          <span className={`h-2 w-2 rounded-full ${heatingOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                           <span>{showLoading ? 'Loading…' : heatingOn ? 'Heating' : 'Idle'}</span>
                         </div>
                       </div>
