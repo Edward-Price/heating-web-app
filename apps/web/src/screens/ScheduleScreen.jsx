@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronUp, Menu } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -45,6 +46,25 @@ export default function ScheduleScreen({
   const TIME_STEPS = Array.from({ length: 49 }, (_, idx) => idx * 0.5);
   const toTimeOptions = (minValue, maxValue) =>
     TIME_STEPS.filter((value) => value >= minValue - 0.001 && value <= maxValue + 0.001);
+  const [newPeriodStart, setNewPeriodStart] = useState(null);
+  const sortedDayPeriods = useMemo(() => {
+    if (scheduleZoneId === null || scheduleDayIndex === null) return [];
+    return getDayPeriods(scheduleZoneId, scheduleDayIndex)
+      .map((period, originalIndex) => ({ period, originalIndex }))
+      .sort((a, b) => a.period.start - b.period.start);
+  }, [getDayPeriods, scheduleDayIndex, scheduleZoneId]);
+
+  useEffect(() => {
+    setNewPeriodStart(null);
+  }, [scheduleZoneId, scheduleDayIndex]);
+
+  useEffect(() => {
+    if (newPeriodStart === null) return;
+    const exists = sortedDayPeriods.some(({ period }) => Math.abs(period.start - newPeriodStart) < 0.001);
+    if (!exists) {
+      setNewPeriodStart(null);
+    }
+  }, [newPeriodStart, sortedDayPeriods]);
 
   return (
     <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
@@ -201,30 +221,33 @@ export default function ScheduleScreen({
               </div>
 
               <div className="mt-1">
-                <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-foreground">
-                  {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-                    .map((period, originalIndex) => ({ period, originalIndex }))
-                    .sort((a, b) => a.period.start - b.period.start)
-                    .map(({ period, originalIndex }) => (
-                      <span key={`timeline-label-${originalIndex}`}>
-                        {formatScheduleValue(period, scheduleIsBinary)} ({formatHour(period.start)}-{formatHour(period.end)})
+                <div className="relative pt-6">
+                  {sortedDayPeriods.map(({ period, originalIndex }) => {
+                    const centerPct = ((period.start + period.end) / 2 / 24) * 100;
+                    return (
+                      <span
+                        key={`timeline-label-${originalIndex}`}
+                        className="absolute top-0 -translate-x-1/2 whitespace-nowrap text-xs font-medium text-foreground"
+                        style={{ left: `${centerPct}%` }}
+                      >
+                        {formatScheduleValue(period, scheduleIsBinary)}
                       </span>
-                    ))}
-                </div>
-                <div className="relative flex h-12 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                  {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-                    .map((period, originalIndex) => ({ period, originalIndex }))
-                    .sort((a, b) => a.period.start - b.period.start)
-                    .map(({ period, originalIndex }) => {
+                    );
+                  })}
+                  <div className="relative flex h-12 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    {sortedDayPeriods.map(({ period, originalIndex }, idx) => {
                       const widthPercent = ((period.end - period.start) / 24) * 100;
                       return (
                         <div
                           key={`timeline-segment-${originalIndex}`}
-                          className="flex items-center justify-center border-r border-slate-200 text-sm font-semibold text-foreground last:border-r-0 dark:border-slate-700"
+                          className={`border-r border-slate-200 last:border-r-0 dark:border-slate-700 ${
+                            idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-100/70 dark:bg-slate-800/70'
+                          }`}
                           style={{ width: `${widthPercent}%` }}
                         />
                       );
                     })}
+                  </div>
                 </div>
 
                 <div className="mt-2 grid grid-cols-5 px-0.5 text-xs text-slate-400 dark:text-slate-500">
@@ -237,17 +260,25 @@ export default function ScheduleScreen({
               </div>
             </Card>
 
-            {getDayPeriods(scheduleZoneId, scheduleDayIndex)
-              .map((period, originalIndex) => ({ period, originalIndex }))
-              .sort((a, b) => a.period.start - b.period.start)
-              .map(({ period, originalIndex }, sortedIndex, sortedPeriods) => {
+            {sortedDayPeriods.map(({ period, originalIndex }, sortedIndex, sortedPeriods) => {
                 const previousEnd = sortedIndex === 0 ? 0 : sortedPeriods[sortedIndex - 1].period.end;
                 const nextStart = sortedIndex === sortedPeriods.length - 1 ? 24 : sortedPeriods[sortedIndex + 1].period.start;
                 const startOptions = toTimeOptions(previousEnd, period.end - 0.5);
                 const endOptions = toTimeOptions(period.start + 0.5, nextStart);
+                const isNewPeriod = newPeriodStart !== null && Math.abs(period.start - newPeriodStart) < 0.001;
                 return (
-                  <Card key={`${period.start}-${period.end}-${originalIndex}`} className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
+                  <Card
+                    key={`${period.start}-${period.end}-${originalIndex}`}
+                    className={`border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900 ${
+                      isNewPeriod ? 'ring-1 ring-emerald-300 dark:ring-emerald-500' : ''
+                    }`}
+                  >
                     <div className="grid gap-3">
+                      {isNewPeriod ? (
+                        <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                          New period
+                        </div>
+                      ) : null}
                       <div className="grid grid-cols-2 gap-2">
                         <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-muted">
                           Start
@@ -333,7 +364,15 @@ export default function ScheduleScreen({
               )}
               <Button
                 variant="outline"
-                onClick={() => addSchedulePeriod(scheduleZoneId, scheduleDayIndex)}
+                onClick={() => {
+                  const current = sortedDayPeriods;
+                  const lastPeriod = current[current.length - 1]?.period || null;
+                  const expectedStart = lastPeriod
+                    ? (lastPeriod.end < 24 ? lastPeriod.end : Math.max(lastPeriod.start + 0.5, 23))
+                    : 23;
+                  setNewPeriodStart(Math.round(expectedStart * 2) / 2);
+                  addSchedulePeriod(scheduleZoneId, scheduleDayIndex);
+                }}
               >
                 + Add period
               </Button>

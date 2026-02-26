@@ -514,27 +514,37 @@ export default function App() {
   function addSchedulePeriod(zoneId, dayIndex) {
     updateDayPeriods(zoneId, dayIndex, (periods) => {
       if (!Array.isArray(periods) || periods.length === 0) {
-        return [{ start: 0, end: 24, temp: 18, colorIndex: 0 }];
+        return [
+          { start: 0, end: 23, temp: 18, colorIndex: 0 },
+          { start: 23, end: 24, temp: 18, colorIndex: 1 },
+        ];
       }
       const sorted = [...periods]
         .map((period, idx) => ({ period, idx }))
         .sort((a, b) => a.period.start - b.period.start);
-      const splitCandidate = sorted.reduce((best, current) => {
-        const bestWidth = best ? best.period.end - best.period.start : -1;
-        const currentWidth = current.period.end - current.period.start;
-        return currentWidth > bestWidth ? current : best;
-      }, null);
-      if (!splitCandidate) return periods;
-      const { period, idx } = splitCandidate;
-      const width = period.end - period.start;
-      if (width < 1) {
+      const last = sorted[sorted.length - 1];
+      if (!last) return periods;
+
+      const next = [...periods].map((period) => ({ ...period }));
+      const lastPeriod = next[last.idx];
+      if (!lastPeriod) return periods;
+
+      const defaultDuration = 1;
+      const minDuration = 0.5;
+
+      if (lastPeriod.end < 24) {
+        const newStart = lastPeriod.end;
+        const newEnd = Math.min(24, newStart + defaultDuration);
+        next.push({ start: newStart, end: newEnd, temp: lastPeriod.temp, colorIndex: 0 });
+        return next;
+      }
+
+      const carveStart = Math.max(lastPeriod.start + minDuration, 24 - defaultDuration);
+      if (carveStart >= lastPeriod.end) {
         return periods;
       }
-      let split = Math.round(((period.start + period.end) / 2) * 2) / 2;
-      split = Math.max(period.start + 0.5, Math.min(period.end - 0.5, split));
-      const next = [...periods];
-      next[idx] = { ...period, end: split };
-      next.splice(idx + 1, 0, { ...period, start: split });
+      next[last.idx] = { ...lastPeriod, end: carveStart };
+      next.push({ ...lastPeriod, start: carveStart, end: 24, colorIndex: 0 });
       return next;
     });
   }
