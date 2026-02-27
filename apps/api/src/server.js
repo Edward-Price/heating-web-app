@@ -204,6 +204,7 @@ function mapScheduleTemp(value) {
 }
 
 function normalizeDayEntries(entries) {
+  const toHourPrecision = (minutes) => Math.round((Number(minutes) / 60) * 100) / 100;
   const points = Array.isArray(entries)
     ? entries
         .map((item) => ({ O: Number(item && item.O), T: item && item.T }))
@@ -218,10 +219,15 @@ function normalizeDayEntries(entries) {
     const startMin = Math.max(0, Math.min(1440, current.O));
     const endMin = Math.max(startMin, Math.min(1440, next ? next.O : 1440));
     if (startMin >= endMin) continue;
+    const startHour = Math.max(0, Math.min(24, toHourPrecision(startMin)));
+    let endHour = Math.max(startHour, Math.min(24, toHourPrecision(endMin)));
+    if (endHour <= startHour) {
+      endHour = Math.min(24, startHour + (10 / 60));
+    }
 
     periods.push({
-      start: Math.floor(startMin / 60),
-      end: Math.floor(endMin / 60),
+      start: startHour,
+      end: endHour,
       temp: mapScheduleTemp(current.T),
     });
   }
@@ -400,9 +406,6 @@ function normalizePeriodsForWrite(periods) {
   if (!entries.length) {
     return [{ O: 0, T: 180 }];
   }
-  if (entries[0].O > 0) {
-    entries.unshift({ O: 0, T: entries[0].T });
-  }
   return entries;
 }
 
@@ -541,7 +544,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const zoneScheduleDayWriteMatch = pathOnly.match(/^\/zones\/(\d+)\/schedule\/day\/(\d+)$/);
-    if (req.method === 'PUT' && zoneScheduleDayWriteMatch) {
+    if ((req.method === 'PUT' || req.method === 'POST') && zoneScheduleDayWriteMatch) {
       const auth = requireSession(req, res);
       if (!auth) return;
 

@@ -21,8 +21,10 @@ export function createEmptyWeekSchedule() {
 
 export function formatHour(hour) {
   const safe = Math.max(0, Math.min(24, Number(hour) || 0));
-  const h = Math.floor(safe);
-  return `${String(h).padStart(2, '0')}:00`;
+  const totalMinutes = Math.round(safe * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export function isBinaryScheduleDevice(device) {

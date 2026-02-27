@@ -558,9 +558,9 @@ export default function App() {
       if (!removed) return periods;
 
       if (periodIndex === 0) {
-        next[1] = { ...next[1], start: 0 };
+        next[1] = { ...next[1], start: removed.start };
       } else if (periodIndex === next.length - 1) {
-        next[periodIndex - 1] = { ...next[periodIndex - 1], end: 24 };
+        next[periodIndex - 1] = { ...next[periodIndex - 1], end: removed.end };
       } else {
         next[periodIndex - 1] = { ...next[periodIndex - 1], end: removed.end };
       }
@@ -570,13 +570,26 @@ export default function App() {
   }
 
   function setSchedulePeriodStart(zoneId, dayIndex, periodIndex, nextStart) {
-    updateDayPeriods(zoneId, dayIndex, (periods) =>
-      periods.map((period, idx) => {
-        if (idx !== periodIndex) return period;
-        const start = Math.max(0, Math.min(period.end - 0.5, Number(nextStart)));
-        return { ...period, start: Number.isFinite(start) ? start : period.start };
-      })
-    );
+    updateDayPeriods(zoneId, dayIndex, (periods) => {
+      const next = periods.map((period) => ({ ...period }));
+      if (periodIndex < 0 || periodIndex >= next.length) {
+        return periods;
+      }
+      const current = next[periodIndex];
+      if (!current) return periods;
+      const previous = next[periodIndex - 1];
+      const step = 10 / 60;
+      const minStart = previous ? previous.start + step : 0;
+      const maxStart = current.end - step;
+      const start = Math.max(minStart, Math.min(maxStart, Number(nextStart)));
+      if (!Number.isFinite(start)) return periods;
+
+      if (previous) {
+        previous.end = start;
+      }
+      current.start = start;
+      return next;
+    });
   }
 
   function setSchedulePeriodEnd(zoneId, dayIndex, periodIndex, nextEnd) {
@@ -658,10 +671,20 @@ export default function App() {
 
     setScheduleSavingByZone((prev) => ({ ...prev, [zoneKey]: true }));
     try {
-      const res = await apiPut(`/zones/${zoneId}/schedule/day/${dayIndex}`, {
-        scheduleId: scheduleIdByZone[zoneKey],
-        week,
-      });
+      let res;
+      try {
+        res = await apiPut(`/zones/${zoneId}/schedule/day/${dayIndex}`, {
+          scheduleId: scheduleIdByZone[zoneKey],
+          week,
+        });
+      } catch (putErr) {
+        const msg = String(putErr && putErr.message ? putErr.message : putErr);
+        if (!msg.includes('404')) throw putErr;
+        res = await apiPost(`/zones/${zoneId}/schedule/day/${dayIndex}`, {
+          scheduleId: scheduleIdByZone[zoneKey],
+          week,
+        });
+      }
       const normalizedWeek = normalizeScheduleWeekPayload(res.week);
       setScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
       setSavedScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
@@ -672,6 +695,31 @@ export default function App() {
     } finally {
       setScheduleSavingByZone((prev) => ({ ...prev, [zoneKey]: false }));
     }
+  }
+
+  function copyScheduleDayPattern(zoneId, sourceDayIndex, targetDayIndexes) {
+    const zoneKey = String(zoneId);
+    const sourceDay = getZoneSchedule(zoneId)[sourceDayIndex];
+    if (!sourceDay || !Array.isArray(sourceDay.periods)) return;
+
+    const targetSet = new Set(
+      (Array.isArray(targetDayIndexes) ? targetDayIndexes : [])
+        .map((idx) => Number(idx))
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx <= 6)
+    );
+    targetSet.delete(Number(sourceDayIndex));
+    if (targetSet.size === 0) return;
+
+    const copiedPeriods = sourceDay.periods.map((period) => ({ ...period }));
+    setScheduleByZone((prev) => {
+      const currentWeek = prev[zoneKey] || createEmptyWeekSchedule();
+      const nextWeek = currentWeek.map((day, idx) => {
+        if (!targetSet.has(idx)) return day;
+        return { ...day, periods: copiedPeriods.map((period) => ({ ...period })) };
+      });
+      return { ...prev, [zoneKey]: nextWeek };
+    });
+    setStatus('Copied day schedule.');
   }
 
   function isScheduleDayExpanded(zoneId, dayIndex) {
@@ -959,11 +1007,15 @@ export default function App() {
   const scheduleZone = selectedScheduleZone();
   const scheduleIsBinary = isBinaryScheduleDevice(scheduleZone);
   const isScheduleZoneLoading = scheduleZoneId !== null && Boolean(scheduleLoadingByZone[String(scheduleZoneId)]);
+  const savedDayPeriods =
+    scheduleZoneId !== null && scheduleDayIndex !== null
+      ? (savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods) || []
+      : [];
   const hasUnsavedScheduleChanges =
     scheduleZoneId !== null && scheduleDayIndex !== null
       ? !areSchedulePeriodsEqual(
           getDayPeriods(scheduleZoneId, scheduleDayIndex),
-          (savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods) || []
+          savedDayPeriods
         )
       : false;
   const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
@@ -1038,8 +1090,10 @@ export default function App() {
           setSchedulePeriodStart={setSchedulePeriodStart}
           setSchedulePeriodEnd={setSchedulePeriodEnd}
           saveScheduleDay={saveScheduleDay}
+          copyScheduleDayPattern={copyScheduleDayPattern}
           isScheduleSaving={scheduleZoneId !== null && Boolean(scheduleSavingByZone[String(scheduleZoneId)])}
           hasUnsavedScheduleChanges={hasUnsavedScheduleChanges}
+          savedDayPeriods={savedDayPeriods}
           getDayPeriods={getDayPeriods}
           renderBottomNav={renderBottomNav}
           menuOpen={menuOpen}
