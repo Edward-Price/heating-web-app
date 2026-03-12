@@ -114,7 +114,7 @@ function buildPacket({ providerSession, SI, HI, payload, useStringGmi, omitPaylo
   return [header, payload];
 }
 
-async function sendProviderRequest(providerSession, state, { SI, HI, payload }) {
+async function sendProviderRequest(providerSession, state, { SI, HI, payload, timeoutMs = 12000 }) {
   await checkGatewayConnected(providerSession);
   const canOmitPayload = Array.isArray(payload) && payload.length === 0;
 
@@ -155,13 +155,15 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload }) 
             'Request-id': '1',
           },
           request,
-          timeoutMs: 12000,
+          timeoutMs,
         });
       } catch (err) {
         lastErr = err;
         const msg = err && err.message ? err.message : String(err);
         const is708 = msg.includes('reason=708');
-        if (!is708) {
+        const isTimeout = msg.includes('WS request timeout');
+        const isEarlyClose = msg.includes('WS closed before response');
+        if (!is708 && !isTimeout && !isEarlyClose) {
           throw err;
         }
       }
@@ -230,6 +232,7 @@ async function getZoneSchedule(providerSession, state, zoneIdOrIndex) {
         SI: 17,
         HI: 22,
         payload: [idx],
+        timeoutMs: 18000,
       });
     } catch (err) {
       lastErr = err;
@@ -244,6 +247,7 @@ async function setZoneSchedule(providerSession, state, schedulePayload) {
     SI: 17,
     HI: 21,
     payload: schedulePayload,
+    timeoutMs: 20000,
   });
 }
 

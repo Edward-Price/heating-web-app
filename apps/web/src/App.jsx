@@ -462,25 +462,44 @@ export default function App() {
     return Array.isArray(week[dayIndex]?.periods) ? week[dayIndex].periods : [];
   }
 
-  function areSchedulePeriodsEqual(leftPeriods, rightPeriods) {
-    const normalizePeriods = (periods) =>
-      (Array.isArray(periods) ? periods : [])
-        .map((period) => ({
-          start: Number(period && period.start),
-          end: Number(period && period.end),
-          temp: Number(period && period.temp),
-        }))
-        .filter((period) => Number.isFinite(period.start) && Number.isFinite(period.end) && Number.isFinite(period.temp))
-        .map((period) => ({
-          start: Math.round(period.start * 100) / 100,
-          end: Math.round(period.end * 100) / 100,
-          temp: Math.round(period.temp * 100) / 100,
-        }))
-        .sort((a, b) => a.start - b.start);
+  function normalizePeriodsForCompare(periods) {
+    return (Array.isArray(periods) ? periods : [])
+      .map((period) => ({
+        start: Number(period && period.start),
+        end: Number(period && period.end),
+        temp: Number(period && period.temp),
+      }))
+      .filter((period) => Number.isFinite(period.start) && Number.isFinite(period.end) && Number.isFinite(period.temp))
+      .map((period) => ({
+        start: Math.round(period.start * 100) / 100,
+        end: Math.round(period.end * 100) / 100,
+        temp: Math.round(period.temp * 100) / 100,
+      }))
+      .sort((a, b) => a.start - b.start);
+  }
 
-    const left = normalizePeriods(leftPeriods);
-    const right = normalizePeriods(rightPeriods);
+  function areSchedulePeriodsEqual(leftPeriods, rightPeriods) {
+    const left = normalizePeriodsForCompare(leftPeriods);
+    const right = normalizePeriodsForCompare(rightPeriods);
     return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function areScheduleWeeksEqual(leftWeek, rightWeek) {
+    const getPeriods = (week, dayIndex) => {
+      if (!Array.isArray(week)) return [];
+      const day =
+        week.find((item) => Number(item && item.dayIndex) === dayIndex)
+        || week[dayIndex]
+        || null;
+      return Array.isArray(day && day.periods) ? day.periods : [];
+    };
+
+    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+      if (!areSchedulePeriodsEqual(getPeriods(leftWeek, dayIndex), getPeriods(rightWeek, dayIndex))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function updateDayPeriods(zoneId, dayIndex, updater) {
@@ -612,13 +631,25 @@ export default function App() {
       return createEmptyWeekSchedule();
     }
 
+    const STEP_MINUTES = 10;
+    const MINUTES_PER_HOUR = 60;
+    const DAY_MINUTES = 24 * MINUTES_PER_HOUR;
+    const snapHourToStep = (hourValue) => {
+      const totalMinutes = Math.round(Number(hourValue) * MINUTES_PER_HOUR);
+      if (!Number.isFinite(totalMinutes)) return NaN;
+      const snappedMinutes = Math.round(totalMinutes / STEP_MINUTES) * STEP_MINUTES;
+      const clampedMinutes = Math.max(0, Math.min(DAY_MINUTES, snappedMinutes));
+      return clampedMinutes / MINUTES_PER_HOUR;
+    };
+
     return WEEK_DAYS.map((day, dayIndex) => {
       const source = weekPayload.find((item) => Number(item && item.dayIndex) === dayIndex) || {};
       const periods = Array.isArray(source.periods) ? source.periods : [];
       const normalizedPeriods = periods
         .map((period, idx) => {
-          const start = Math.max(0, Math.min(24, Number(period.start)));
-          const end = Math.max(start, Math.min(24, Number(period.end)));
+          const start = snapHourToStep(period.start);
+          const endRaw = snapHourToStep(period.end);
+          const end = Number.isFinite(start) && Number.isFinite(endRaw) ? Math.max(start, endRaw) : NaN;
           const temp = Number(period.temp);
           return {
             start: Number.isFinite(start) ? start : 0,
@@ -700,7 +731,7 @@ export default function App() {
   function copyScheduleDayPattern(zoneId, sourceDayIndex, targetDayIndexes) {
     const zoneKey = String(zoneId);
     const sourceDay = getZoneSchedule(zoneId)[sourceDayIndex];
-    if (!sourceDay || !Array.isArray(sourceDay.periods)) return;
+    if (!sourceDay || !Array.isArray(sourceDay.periods)) return 0;
 
     const targetSet = new Set(
       (Array.isArray(targetDayIndexes) ? targetDayIndexes : [])
@@ -708,7 +739,7 @@ export default function App() {
         .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx <= 6)
     );
     targetSet.delete(Number(sourceDayIndex));
-    if (targetSet.size === 0) return;
+    if (targetSet.size === 0) return 0;
 
     const copiedPeriods = sourceDay.periods.map((period) => ({ ...period }));
     setScheduleByZone((prev) => {
@@ -719,7 +750,7 @@ export default function App() {
       });
       return { ...prev, [zoneKey]: nextWeek };
     });
-    setStatus('Copied day schedule.');
+    return targetSet.size;
   }
 
   function isScheduleDayExpanded(zoneId, dayIndex) {
@@ -1011,12 +1042,11 @@ export default function App() {
     scheduleZoneId !== null && scheduleDayIndex !== null
       ? (savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods) || []
       : [];
+  const currentWeek = scheduleZoneId !== null ? getZoneSchedule(scheduleZoneId) : [];
+  const savedWeek = scheduleZoneId !== null ? (savedScheduleByZone[String(scheduleZoneId)] || createEmptyWeekSchedule()) : [];
   const hasUnsavedScheduleChanges =
     scheduleZoneId !== null && scheduleDayIndex !== null
-      ? !areSchedulePeriodsEqual(
-          getDayPeriods(scheduleZoneId, scheduleDayIndex),
-          savedDayPeriods
-        )
+      ? !areScheduleWeeksEqual(currentWeek, savedWeek)
       : false;
   const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
 

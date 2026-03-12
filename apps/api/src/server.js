@@ -277,6 +277,7 @@ function parseSchedule(providerResponse) {
       dayIndex: idx,
       periods: normalizeDayEntries(day.D),
     })),
+    writeShape: 'week-blocks',
   });
 
   // Shape A: top.D = [{ D:[{O,T}, ...] }, ...] (Mon..Sun)
@@ -315,6 +316,7 @@ function parseSchedule(providerResponse) {
           dayIndex,
           periods: entries.length ? normalizeDayEntries(entries) : [{ start: 0, end: 24, temp: 18 }],
         })),
+        writeShape: 'flat-stream',
       };
     }
 
@@ -348,6 +350,7 @@ function parseSchedule(providerResponse) {
           dayIndex,
           periods: dayBuckets[dayIndex]?.length ? normalizeDayEntries(dayBuckets[dayIndex]) : [{ start: 0, end: 24, temp: 18 }],
         })),
+        writeShape: 'flat-stream',
       };
     }
 
@@ -358,10 +361,11 @@ function parseSchedule(providerResponse) {
         dayIndex,
         periods: shared,
       })),
+      writeShape: 'flat-stream',
     };
   }
 
-  return { scheduleId, week: [] };
+  return { scheduleId, week: [], writeShape: 'week-blocks' };
 }
 
 function toProviderScheduleTemp(value) {
@@ -418,6 +422,28 @@ function buildProviderWeekPayload(week) {
       D: normalizePeriodsForWrite(day && day.periods),
     };
   });
+}
+
+function buildProviderFlatPayload(week) {
+  const allEntries = [];
+  for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+    const day = Array.isArray(week)
+      ? week.find((item) => Number(item && item.dayIndex) === dayIndex)
+      : null;
+    const dayEntries = normalizePeriodsForWrite(day && day.periods);
+    allEntries.push(...dayEntries);
+    // Match provider read shape exactly: sentinel day separator after every day.
+    allEntries.push({ O: 65535, T: 65535 });
+  }
+  return allEntries;
+}
+
+function buildScheduleWriteBody({ scheduleId, week, shape }) {
+  const safeShape = shape === 'flat-stream' ? 'flat-stream' : 'week-blocks';
+  return [{
+    I: scheduleId,
+    D: safeShape === 'flat-stream' ? buildProviderFlatPayload(week) : buildProviderWeekPayload(week),
+  }];
 }
 
 const server = http.createServer(async (req, res) => {
@@ -558,16 +584,14 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       let scheduleId = Number(body.scheduleId);
       let week = Array.isArray(body.week) ? body.week : null;
+      const currentResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
+      const currentParsed = parseSchedule(currentResponse);
 
-      if (!week || !Number.isFinite(scheduleId)) {
-        const currentResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
-        const currentParsed = parseSchedule(currentResponse);
-        if (!week) {
-          week = currentParsed.week;
-        }
-        if (!Number.isFinite(scheduleId)) {
-          scheduleId = Number(currentParsed.scheduleId);
-        }
+      if (!week) {
+        week = currentParsed.week;
+      }
+      if (!Number.isFinite(scheduleId)) {
+        scheduleId = Number(currentParsed.scheduleId);
       }
 
       if (!Array.isArray(week) || !Number.isFinite(scheduleId)) {
@@ -575,20 +599,66 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const payload = [{ I: scheduleId, D: buildProviderWeekPayload(week) }];
-      const providerResponse = await setZoneSchedule(auth.session.providerSession, auth.session.seqState, payload);
-      const providerError = extractProviderError(providerResponse);
+      const preferredShape = currentParsed.writeShape === 'flat-stream' ? 'flat-stream' : 'week-blocks';
+      const fallbackShape = preferredShape === 'flat-stream' ? 'week-blocks' : 'flat-stream';
+      const primaryPayload = buildScheduleWriteBody({ scheduleId, week, shape: preferredShape });
+      let providerResponse = null;
+      let providerError = null;
+      const attemptedShapes = [preferredShape];
+      let transportError = null;
+      try {
+        providerResponse = await setZoneSchedule(auth.session.providerSession, auth.session.seqState, primaryPayload);
+        providerError = extractProviderError(providerResponse);
+      } catch (err) {
+        transportError = err;
+      }
+
+      if ((providerError && providerError.code === 4 && providerError.serviceId === 17) || transportError) {
+        const fallbackPayload = buildScheduleWriteBody({ scheduleId, week, shape: fallbackShape });
+        attemptedShapes.push(fallbackShape);
+        try {
+          const retryResponse = await setZoneSchedule(auth.session.providerSession, auth.session.seqState, fallbackPayload);
+          const retryError = extractProviderError(retryResponse);
+          if (!retryError) {
+            providerResponse = retryResponse;
+            providerError = null;
+            transportError = null;
+          } else {
+            providerResponse = retryResponse;
+            providerError = retryError;
+            transportError = null;
+          }
+        } catch (retryTransportErr) {
+          transportError = retryTransportErr;
+        }
+      }
+
+      if (transportError) {
+        sendJson(res, 502, {
+          ok: false,
+          error: transportError && transportError.message ? transportError.message : 'Provider schedule write transport failure',
+          attemptedShapes,
+        });
+        return;
+      }
+
       if (providerError) {
         sendJson(res, 502, {
           ok: false,
           error: `Provider rejected schedule write (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          attemptedShapes,
           providerResponse,
         });
         return;
       }
 
-      const updatedProviderResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
-      const parsed = parseSchedule(updatedProviderResponse);
+      let parsed = { scheduleId, week };
+      try {
+        const updatedProviderResponse = await getZoneSchedule(auth.session.providerSession, auth.session.seqState, zoneId);
+        parsed = parseSchedule(updatedProviderResponse);
+      } catch (readbackErr) {
+        console.warn('[api][schedule] readback failed after successful write', readbackErr && readbackErr.message ? readbackErr.message : readbackErr);
+      }
       sendJson(res, 200, {
         ok: true,
         zoneId,

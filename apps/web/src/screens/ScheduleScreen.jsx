@@ -44,6 +44,7 @@ export default function ScheduleScreen({
   const toTimeOptions = (minValue, maxValue) =>
     TIME_STEPS.filter((value) => value >= minValue - 0.001 && value <= maxValue + 0.001);
   const [newPeriodStart, setNewPeriodStart] = useState(null);
+  const [copyNotice, setCopyNotice] = useState('');
   const timeGuides = [0, 6, 12, 18, 24];
   const getTrendIndicator = (currentTemp, previousTemp) => {
     if (scheduleIsBinary) return '';
@@ -95,6 +96,7 @@ export default function ScheduleScreen({
 
   useEffect(() => {
     setNewPeriodStart(null);
+    setCopyNotice('');
   }, [scheduleZoneId, scheduleDayIndex]);
 
   useEffect(() => {
@@ -392,17 +394,32 @@ export default function ScheduleScreen({
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4])}
+                  onClick={() => {
+                    const copied = copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4]);
+                    if (copied > 0) {
+                      setCopyNotice(`Copied to ${copied} weekdays. Unsaved changes.`);
+                    }
+                  }}
                 >
                   Copy to weekdays
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4, 5, 6])}
+                  onClick={() => {
+                    const copied = copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4, 5, 6]);
+                    if (copied > 0) {
+                      setCopyNotice(`Copied to ${copied} days. Unsaved changes.`);
+                    }
+                  }}
                 >
                   Copy to all days
                 </Button>
               </div>
+              {copyNotice ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                  {copyNotice}
+                </p>
+              ) : null}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -421,7 +438,7 @@ export default function ScheduleScreen({
                 onClick={() => saveScheduleDay(scheduleZoneId, scheduleDayIndex)}
                 disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
               >
-                {isScheduleSaving ? 'Saving...' : 'Save day'}
+                {isScheduleSaving ? 'Saving...' : 'Save schedule'}
               </Button>
             </div>
           </section>
