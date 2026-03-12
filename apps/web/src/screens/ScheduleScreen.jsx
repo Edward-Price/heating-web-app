@@ -25,9 +25,16 @@ export default function ScheduleScreen({
   addSchedulePeriod,
   setSchedulePeriodStart,
   saveScheduleDay,
+  saveScheduleWeek,
   copyScheduleDayPattern,
+  resetScheduleDay,
+  resetScheduleWeek,
   isScheduleSaving,
   hasUnsavedScheduleChanges,
+  hasUnsavedWeekChanges,
+  hasUnsavedCurrentDayChanges,
+  scheduleNotice,
+  dismissScheduleNotice,
   savedDayPeriods,
   getDayPeriods,
   renderBottomNav,
@@ -44,7 +51,8 @@ export default function ScheduleScreen({
   const toTimeOptions = (minValue, maxValue) =>
     TIME_STEPS.filter((value) => value >= minValue - 0.001 && value <= maxValue + 0.001);
   const [newPeriodStart, setNewPeriodStart] = useState(null);
-  const [copyNotice, setCopyNotice] = useState('');
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [copyTargetPickerOpen, setCopyTargetPickerOpen] = useState(false);
   const timeGuides = [0, 6, 12, 18, 24];
   const getTrendIndicator = (currentTemp, previousTemp) => {
     if (scheduleIsBinary) return '';
@@ -61,34 +69,6 @@ export default function ScheduleScreen({
       .map((period, originalIndex) => ({ period, originalIndex }))
       .sort((a, b) => a.period.start - b.period.start);
   }, [getDayPeriods, scheduleDayIndex, scheduleZoneId]);
-  const dayTimelineLabels = useMemo(() => {
-    const laneRightEdge = [-Infinity, -Infinity];
-    return sortedDayPeriods.map(({ period, originalIndex }, idx) => {
-      const trend = scheduleIsBinary ? '' : `${getTrendIndicator(period.temp, sortedDayPeriods[idx - 1]?.period?.temp)} `;
-      const text = `${trend}${formatScheduleValue(period, scheduleIsBinary)}`.trim();
-      const centerPct = ((period.start + period.end) / 2 / 24) * 100;
-      const clampedCenterPct = Math.max(6, Math.min(94, centerPct));
-      const estimatedWidthPct = Math.max(6, Math.min(18, text.length * 1.05));
-      const leftEdge = clampedCenterPct - estimatedWidthPct / 2;
-      const rightEdge = clampedCenterPct + estimatedWidthPct / 2;
-
-      let lane = 0;
-      if (leftEdge <= laneRightEdge[0] + 0.5) {
-        lane = 1;
-      }
-      if (leftEdge <= laneRightEdge[lane] + 0.5) {
-        lane = laneRightEdge[0] <= laneRightEdge[1] ? 0 : 1;
-      }
-      laneRightEdge[lane] = Math.max(laneRightEdge[lane], rightEdge);
-
-      return {
-        key: `timeline-label-${originalIndex}`,
-        leftPct: clampedCenterPct,
-        text,
-        lane,
-      };
-    });
-  }, [formatScheduleValue, scheduleIsBinary, sortedDayPeriods]);
   const sortedSavedDayPeriods = useMemo(
     () => (Array.isArray(savedDayPeriods) ? savedDayPeriods.slice().sort((a, b) => a.start - b.start) : []),
     [savedDayPeriods]
@@ -96,7 +76,8 @@ export default function ScheduleScreen({
 
   useEffect(() => {
     setNewPeriodStart(null);
-    setCopyNotice('');
+    setMoreActionsOpen(false);
+    setCopyTargetPickerOpen(false);
   }, [scheduleZoneId, scheduleDayIndex]);
 
   useEffect(() => {
@@ -111,6 +92,42 @@ export default function ScheduleScreen({
     if (scheduleZoneId === null) return [];
     return getZoneSchedule(scheduleZoneId);
   }, [getZoneSchedule, scheduleZoneId]);
+  const bannerState = useMemo(() => {
+    const matchesCurrentContext =
+      scheduleZoneId !== null
+      && scheduleDayIndex !== null
+      && Number(scheduleNotice.zoneId) === Number(scheduleZoneId)
+      && Number(scheduleNotice.dayIndex) === Number(scheduleDayIndex);
+    const activeNotice = matchesCurrentContext ? scheduleNotice : { kind: 'neutral', text: '' };
+    if (activeNotice.kind === 'error' || activeNotice.kind === 'saving') {
+      return activeNotice;
+    }
+    if (activeNotice.kind === 'saved' || activeNotice.kind === 'copied') {
+      return activeNotice;
+    }
+    if (hasUnsavedScheduleChanges) {
+      return { kind: 'dirty', text: 'Unsaved changes' };
+    }
+    return { kind: 'neutral', text: 'All changes saved' };
+  }, [hasUnsavedScheduleChanges, scheduleDayIndex, scheduleNotice, scheduleZoneId]);
+  const bannerClassesByKind = {
+    neutral: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200',
+    dirty: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300',
+    saving: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300',
+    saved: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+    copied: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300',
+    error: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300',
+  };
+  const canDismissBanner = ['saved', 'copied', 'error'].includes(bannerState.kind);
+  const addPeriodFromCurrentDay = () => {
+    const current = sortedDayPeriods;
+    const lastPeriod = current[current.length - 1]?.period || null;
+    const expectedStart = lastPeriod
+      ? (lastPeriod.end < 24 ? lastPeriod.end : Math.max(lastPeriod.start + 0.5, 23))
+      : 23;
+    setNewPeriodStart(Math.round(expectedStart * 2) / 2);
+    addSchedulePeriod(scheduleZoneId, scheduleDayIndex);
+  };
   const getGuideLabelClass = (hour) => {
     if (hour === 0) return 'absolute text-[10px] font-medium text-slate-400 dark:text-slate-500';
     if (hour === 24) return 'absolute -translate-y-full text-[10px] font-medium text-slate-400 dark:text-slate-500';
@@ -185,75 +202,101 @@ export default function ScheduleScreen({
                   </Card>
                 ))
               : (
-                <Card className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-base font-semibold text-foreground">Week overview</h3>
-                    <p className="text-xs text-muted">Tap a day to edit</p>
-                  </div>
-                  <div className="overflow-x-auto pb-1">
-                    <div className="grid min-w-[860px] grid-cols-[42px_repeat(7,minmax(110px,1fr))] gap-2">
-                      <div className="grid gap-1">
-                        <div className="h-[34px]" />
-                        <div className="relative h-[360px]">
-                          {timeGuides.map((hour) => (
-                            <span
-                              key={`guide-${hour}`}
-                              className={getGuideLabelClass(hour)}
-                              style={{ top: `${(hour / 24) * 100}%` }}
-                            >
-                              {hour}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      {weekSchedule.map((day, dayIdx) => (
-                        <div key={day.day} className="grid gap-1">
-                          <button
-                            type="button"
-                            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-semibold text-foreground hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
-                            onClick={() => setScheduleDayIndex(dayIdx)}
-                          >
-                            {day.day.slice(0, 3)}
-                          </button>
-                          <button
-                            type="button"
-                            className="relative h-[360px] overflow-hidden rounded-md border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-900"
-                            onClick={() => setScheduleDayIndex(dayIdx)}
-                          >
+                <>
+                  <Card className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-base font-semibold text-foreground">Week overview</h3>
+                      <p className="text-xs text-muted">Tap a day to edit</p>
+                    </div>
+                    <div className="overflow-x-auto pb-1">
+                      <div className="grid min-w-[860px] grid-cols-[42px_repeat(7,minmax(110px,1fr))] gap-2">
+                        <div className="grid gap-1">
+                          <div className="h-[34px]" />
+                          <div className="relative h-[360px]">
                             {timeGuides.map((hour) => (
                               <span
-                                key={`${day.day}-line-${hour}`}
-                                className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800"
+                                key={`guide-${hour}`}
+                                className={getGuideLabelClass(hour)}
                                 style={{ top: `${(hour / 24) * 100}%` }}
-                              />
+                              >
+                                {hour}
+                              </span>
                             ))}
-                            {day.periods
-                              .slice()
-                              .sort((a, b) => a.start - b.start)
-                              .map((period, idx, periods) => (
-                                <span
-                                  key={`${day.day}-period-${idx}`}
-                                  className={`absolute inset-x-1 rounded px-1 py-0.5 text-[10px] font-semibold ${
-                                    idx % 2 === 0
-                                      ? 'bg-slate-100 text-foreground dark:bg-slate-800'
-                                      : 'bg-slate-200/70 text-foreground dark:bg-slate-700'
-                                  }`}
-                                  style={{
-                                    top: `calc(${(period.start / 24) * 100}% + 2px)`,
-                                    height: `calc(${((period.end - period.start) / 24) * 100}% - 4px)`,
-                                    minHeight: '18px',
-                                  }}
-                                >
-                                  {scheduleIsBinary ? '' : `${getTrendIndicator(period.temp, periods[idx - 1]?.temp)} `}
-                                  {formatScheduleValue(period, scheduleIsBinary)}
-                                </span>
-                              ))}
-                          </button>
+                          </div>
                         </div>
-                      ))}
+                        {weekSchedule.map((day, dayIdx) => (
+                          <div key={day.day} className="grid gap-1">
+                            <button
+                              type="button"
+                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-semibold text-foreground hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+                              onClick={() => setScheduleDayIndex(dayIdx)}
+                            >
+                              {day.day.slice(0, 3)}
+                            </button>
+                            <button
+                              type="button"
+                              className="relative h-[360px] overflow-hidden rounded-md border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-900"
+                              onClick={() => setScheduleDayIndex(dayIdx)}
+                            >
+                              {timeGuides.map((hour) => (
+                                <span
+                                  key={`${day.day}-line-${hour}`}
+                                  className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800"
+                                  style={{ top: `${(hour / 24) * 100}%` }}
+                                />
+                              ))}
+                              {day.periods
+                                .slice()
+                                .sort((a, b) => a.start - b.start)
+                                .map((period, idx, periods) => (
+                                  <span
+                                    key={`${day.day}-period-${idx}`}
+                                    className={`absolute inset-x-1 rounded px-1 py-0.5 text-[10px] font-semibold ${
+                                      idx % 2 === 0
+                                        ? 'bg-slate-100 text-foreground dark:bg-slate-800'
+                                        : 'bg-slate-200/70 text-foreground dark:bg-slate-700'
+                                    }`}
+                                    style={{
+                                      top: `calc(${(period.start / 24) * 100}% + 2px)`,
+                                      height: `calc(${((period.end - period.start) / 24) * 100}% - 4px)`,
+                                      minHeight: '18px',
+                                    }}
+                                  >
+                                    {scheduleIsBinary ? '' : `${getTrendIndicator(period.temp, periods[idx - 1]?.temp)} `}
+                                    {formatScheduleValue(period, scheduleIsBinary)}
+                                  </span>
+                                ))}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </Card>
+
+                  <div className="grid gap-2">
+                    <p className={`text-xs font-medium ${hasUnsavedWeekChanges ? 'text-amber-600 dark:text-amber-400' : 'text-muted'}`}>
+                      {hasUnsavedWeekChanges ? 'Unsaved week changes' : 'All week changes saved'}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          if (!window.confirm('Discard all unsaved changes for this week?')) return;
+                          resetScheduleWeek(scheduleZoneId);
+                        }}
+                        disabled={Boolean(isScheduleSaving) || !hasUnsavedWeekChanges}
+                      >
+                        Reset week
+                      </Button>
+                      <Button
+                        onClick={() => saveScheduleWeek(scheduleZoneId)}
+                        disabled={Boolean(isScheduleSaving) || !hasUnsavedWeekChanges}
+                      >
+                        {isScheduleSaving ? 'Saving...' : 'Save week'}
+                      </Button>
                     </div>
                   </div>
-                </Card>
+                </>
               )}
           </section>
         ) : (
@@ -261,34 +304,24 @@ export default function ScheduleScreen({
             <Card className="py-3">
               <div className="mb-2 flex items-center justify-between text-sm text-muted">
                 <span>{dayName}</span>
-                <span>24h timeline</span>
+                <span>24h overview</span>
               </div>
 
               <div className="mt-1">
-                <div className="relative pt-10">
-                  {dayTimelineLabels.map((label) => (
-                    <span
-                      key={label.key}
-                      className={`absolute -translate-x-1/2 whitespace-nowrap text-xs font-medium text-foreground ${label.lane === 0 ? 'top-0' : 'top-4'}`}
-                      style={{ left: `${label.leftPct}%` }}
-                    >
-                      {label.text}
-                    </span>
-                  ))}
-                  <div className="relative h-12 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                    {sortedDayPeriods.map(({ period, originalIndex }, idx) => {
-                      const leftPercent = (period.start / 24) * 100;
-                      const widthPercent = ((period.end - period.start) / 24) * 100;
-                      return (
-                        <div
-                          key={`timeline-segment-${originalIndex}`}
-                          className={`absolute top-0 h-full border-r border-slate-200 last:border-r-0 dark:border-slate-700 ${
-                            idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-100/70 dark:bg-slate-800/70'
-                          }`}
-                          style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                        />
-                      );
-                    })}
+                <div className="relative">
+                  <div className="relative h-10 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    {sortedDayPeriods.map(({ period, originalIndex }, idx) => (
+                      <div
+                        key={`timeline-segment-${originalIndex}`}
+                        className={`absolute top-0 h-full border-r border-slate-200 last:border-r-0 dark:border-slate-700 ${
+                          idx % 2 === 0 ? 'bg-slate-100 dark:bg-slate-800' : 'bg-slate-200/80 dark:bg-slate-700/80'
+                        }`}
+                        style={{
+                          left: `${(period.start / 24) * 100}%`,
+                          width: `${((period.end - period.start) / 24) * 100}%`,
+                        }}
+                      />
+                    ))}
                   </div>
                 </div>
 
@@ -386,64 +419,147 @@ export default function ScheduleScreen({
             </Card>
 
             <div className="grid gap-2">
-              {hasUnsavedScheduleChanges ? (
-                <p className="text-xs font-medium text-amber-600 dark:text-amber-400">Unsaved changes</p>
-              ) : (
-                <p className="text-xs font-medium text-muted">All changes saved</p>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const copied = copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4]);
-                    if (copied > 0) {
-                      setCopyNotice(`Copied to ${copied} weekdays. Unsaved changes.`);
-                    }
-                  }}
-                >
-                  Copy to weekdays
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const copied = copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4, 5, 6]);
-                    if (copied > 0) {
-                      setCopyNotice(`Copied to ${copied} days. Unsaved changes.`);
-                    }
-                  }}
-                >
-                  Copy to all days
-                </Button>
+              <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${bannerClassesByKind[bannerState.kind]}`}>
+                <span className="flex-1">{bannerState.text}</span>
+                {canDismissBanner ? (
+                  <button
+                    type="button"
+                    className="rounded px-1 text-[11px] font-semibold opacity-80 hover:opacity-100"
+                    onClick={dismissScheduleNotice}
+                  >
+                    Dismiss
+                  </button>
+                ) : null}
               </div>
-              {copyNotice ? (
-                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-                  {copyNotice}
-                </p>
-              ) : null}
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const current = sortedDayPeriods;
-                  const lastPeriod = current[current.length - 1]?.period || null;
-                  const expectedStart = lastPeriod
-                    ? (lastPeriod.end < 24 ? lastPeriod.end : Math.max(lastPeriod.start + 0.5, 23))
-                    : 23;
-                  setNewPeriodStart(Math.round(expectedStart * 2) / 2);
-                  addSchedulePeriod(scheduleZoneId, scheduleDayIndex);
-                }}
-              >
-                + Add period
-              </Button>
-              <Button
-                onClick={() => saveScheduleDay(scheduleZoneId, scheduleDayIndex)}
-                disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
-              >
-                {isScheduleSaving ? 'Saving...' : 'Save schedule'}
-              </Button>
             </div>
           </section>
         )}
       </div>
+
+      {scheduleDayIndex !== null ? (
+        <>
+          <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40">
+            <div className="pointer-events-auto mx-auto max-w-5xl px-4 md:px-8">
+              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 rounded-xl border border-slate-200/80 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+                <Button
+                  variant="outline"
+                  onClick={addPeriodFromCurrentDay}
+                  disabled={Boolean(isScheduleSaving)}
+                >
+                  + Add period
+                </Button>
+                <Button
+                  onClick={() => saveScheduleDay(scheduleZoneId, scheduleDayIndex)}
+                  disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
+                >
+                  {isScheduleSaving ? 'Saving...' : 'Save schedule'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setCopyTargetPickerOpen(false);
+                    setMoreActionsOpen(true);
+                  }}
+                >
+                  More
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {moreActionsOpen ? (
+            <div className="fixed inset-0 z-50">
+              <button
+                type="button"
+                aria-label="Close actions"
+                className="absolute inset-0 bg-slate-900/40"
+                onClick={() => {
+                  setMoreActionsOpen(false);
+                  setCopyTargetPickerOpen(false);
+                }}
+              />
+              <div className="absolute inset-x-0 bottom-0">
+                <div className="mx-auto max-w-5xl px-4 pb-[calc(env(safe-area-inset-bottom)+5rem)] md:px-8">
+                  <div className="rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-foreground">More actions</h3>
+                      <button
+                        type="button"
+                        className="rounded px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          setCopyTargetPickerOpen(false);
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setCopyTargetPickerOpen((prev) => !prev)}
+                        disabled={Boolean(isScheduleSaving)}
+                      >
+                        Copy day to...
+                      </Button>
+
+                      {copyTargetPickerOpen ? (
+                        <div className="grid grid-cols-2 gap-2 rounded-md border border-slate-200 p-2 dark:border-slate-700">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4]);
+                              setMoreActionsOpen(false);
+                              setCopyTargetPickerOpen(false);
+                            }}
+                          >
+                            Weekdays
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4, 5, 6]);
+                              setMoreActionsOpen(false);
+                              setCopyTargetPickerOpen(false);
+                            }}
+                          >
+                            All days
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          resetScheduleDay(scheduleZoneId, scheduleDayIndex);
+                          setMoreActionsOpen(false);
+                          setCopyTargetPickerOpen(false);
+                        }}
+                        disabled={Boolean(isScheduleSaving) || !hasUnsavedCurrentDayChanges}
+                      >
+                        Reset day
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          if (!window.confirm('Discard all unsaved changes for this week?')) return;
+                          resetScheduleWeek(scheduleZoneId);
+                          setMoreActionsOpen(false);
+                          setCopyTargetPickerOpen(false);
+                        }}
+                        disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
+                      >
+                        Reset week
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       {renderBottomNav()}
 

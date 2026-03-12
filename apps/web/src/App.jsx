@@ -36,6 +36,7 @@ const SCHEDULE_COLORS = [
   { bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-400', chip: 'bg-emerald-500' },
   { bg: 'bg-violet-50', text: 'text-violet-700', bar: 'bg-violet-400', chip: 'bg-violet-500' },
 ];
+const EMPTY_SCHEDULE_NOTICE = { kind: 'neutral', text: '', dismissAt: null, zoneId: null, dayIndex: null };
 
 export default function App() {
   const [debugLayoutEnabled, setDebugLayoutEnabled] = useState(() => {
@@ -64,6 +65,7 @@ export default function App() {
   const [scheduleIdByZone, setScheduleIdByZone] = useState({});
   const [scheduleLoadingByZone, setScheduleLoadingByZone] = useState({});
   const [scheduleSavingByZone, setScheduleSavingByZone] = useState({});
+  const [scheduleNotice, setScheduleNotice] = useState(EMPTY_SCHEDULE_NOTICE);
   const [expandedScheduleDays, setExpandedScheduleDays] = useState({});
   const [statsConfigByZone, setStatsConfigByZone] = useState({});
   const [statsSeriesByZone, setStatsSeriesByZone] = useState({});
@@ -98,6 +100,7 @@ export default function App() {
     setScheduleIdByZone({});
     setScheduleLoadingByZone({});
     setScheduleSavingByZone({});
+    setScheduleNotice(EMPTY_SCHEDULE_NOTICE);
     setConnectionState('disconnected');
     setStatus(message);
   }, []);
@@ -299,6 +302,18 @@ export default function App() {
   }, [layoutCopyStatus]);
 
   useEffect(() => {
+    if (!Number.isFinite(Number(scheduleNotice.dismissAt))) return undefined;
+    const delay = Math.max(0, Number(scheduleNotice.dismissAt) - Date.now());
+    const timeoutId = window.setTimeout(() => {
+      setScheduleNotice((prev) => {
+        if (prev.dismissAt !== scheduleNotice.dismissAt) return prev;
+        return EMPTY_SCHEDULE_NOTICE;
+      });
+    }, delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [scheduleNotice.dismissAt]);
+
+  useEffect(() => {
     if (sessionToken) {
       void loadDashboard();
     }
@@ -462,6 +477,40 @@ export default function App() {
     return Array.isArray(week[dayIndex]?.periods) ? week[dayIndex].periods : [];
   }
 
+  function cloneWeekSchedule(week) {
+    const sourceWeek = Array.isArray(week) ? week : createEmptyWeekSchedule();
+    return sourceWeek.map((day, dayIndex) => ({
+      day: day && day.day ? day.day : WEEK_DAYS[dayIndex],
+      periods: Array.isArray(day && day.periods) ? day.periods.map((period) => ({ ...period })) : [],
+    }));
+  }
+
+  function showScheduleNotice(zoneId, dayIndex, kind, text, autoDismissMs = null) {
+    setScheduleNotice({
+      kind,
+      text,
+      zoneId: Number(zoneId),
+      dayIndex: Number(dayIndex),
+      dismissAt: Number.isFinite(Number(autoDismissMs)) ? Date.now() + Number(autoDismissMs) : null,
+    });
+  }
+
+  function dismissScheduleNotice() {
+    setScheduleNotice(EMPTY_SCHEDULE_NOTICE);
+  }
+
+  function clearScheduleNoticeForContext(zoneId, dayIndex) {
+    setScheduleNotice((prev) => {
+      if (Number(prev.zoneId) !== Number(zoneId) || Number(prev.dayIndex) !== Number(dayIndex)) {
+        return prev;
+      }
+      if (prev.kind === 'saving') {
+        return prev;
+      }
+      return EMPTY_SCHEDULE_NOTICE;
+    });
+  }
+
   function normalizePeriodsForCompare(periods) {
     return (Array.isArray(periods) ? periods : [])
       .map((period) => ({
@@ -504,6 +553,7 @@ export default function App() {
 
   function updateDayPeriods(zoneId, dayIndex, updater) {
     const zoneKey = String(zoneId);
+    clearScheduleNoticeForContext(zoneId, dayIndex);
     setScheduleByZone((prev) => {
       const currentWeek = prev[zoneKey] || createEmptyWeekSchedule();
       const nextWeek = currentWeek.map((day, idx) => {
@@ -671,6 +721,7 @@ export default function App() {
     const zoneKey = String(zoneId);
     setScheduleZoneId(zoneId);
     setScheduleDayIndex(null);
+    dismissScheduleNotice();
     setScheduleLoadingByZone((prev) => ({ ...prev, [zoneKey]: true }));
     try {
       const res = await apiGet(`/zones/${zoneId}/schedule`);
@@ -701,6 +752,7 @@ export default function App() {
     }));
 
     setScheduleSavingByZone((prev) => ({ ...prev, [zoneKey]: true }));
+    showScheduleNotice(zoneId, dayIndex, 'saving', 'Saving schedule...');
     try {
       let res;
       try {
@@ -720,12 +772,17 @@ export default function App() {
       setScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
       setSavedScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
       setScheduleIdByZone((prev) => ({ ...prev, [zoneKey]: Number(res.scheduleId) || prev[zoneKey] || null }));
-      setStatus(`${WEEK_DAYS[dayIndex] || 'Day'} schedule saved.`);
+      showScheduleNotice(zoneId, dayIndex, 'saved', `${WEEK_DAYS[dayIndex] || 'Day'} schedule saved.`, 2200);
     } catch (err) {
-      setStatus(`Schedule save failed: ${String(err.message || err)}`);
+      showScheduleNotice(zoneId, dayIndex, 'error', `Schedule save failed: ${String(err.message || err)}`);
     } finally {
       setScheduleSavingByZone((prev) => ({ ...prev, [zoneKey]: false }));
     }
+  }
+
+  async function saveScheduleWeek(zoneId) {
+    const fallbackDayIndex = Number.isInteger(Number(scheduleDayIndex)) ? Number(scheduleDayIndex) : 0;
+    await saveScheduleDay(zoneId, fallbackDayIndex);
   }
 
   function copyScheduleDayPattern(zoneId, sourceDayIndex, targetDayIndexes) {
@@ -750,7 +807,41 @@ export default function App() {
       });
       return { ...prev, [zoneKey]: nextWeek };
     });
+    showScheduleNotice(
+      zoneId,
+      sourceDayIndex,
+      'copied',
+      `Copied to ${targetSet.size} ${targetSet.size === 1 ? 'day' : 'days'}.`,
+      2200
+    );
     return targetSet.size;
+  }
+
+  function resetScheduleDay(zoneId, dayIndex) {
+    if (!Number.isFinite(Number(zoneId)) || !Number.isInteger(Number(dayIndex))) return;
+    const zoneKey = String(zoneId);
+    setScheduleByZone((prev) => {
+      const currentWeek = cloneWeekSchedule(prev[zoneKey] || createEmptyWeekSchedule());
+      const savedWeek = cloneWeekSchedule(savedScheduleByZone[zoneKey] || createEmptyWeekSchedule());
+      if (!currentWeek[dayIndex] || !savedWeek[dayIndex]) return prev;
+      currentWeek[dayIndex] = { ...savedWeek[dayIndex], periods: savedWeek[dayIndex].periods.map((period) => ({ ...period })) };
+      return { ...prev, [zoneKey]: currentWeek };
+    });
+    showScheduleNotice(zoneId, dayIndex, 'saved', `${WEEK_DAYS[dayIndex] || 'Day'} reset.`, 2200);
+  }
+
+  function resetScheduleWeek(zoneId) {
+    if (!Number.isFinite(Number(zoneId))) return;
+    const zoneKey = String(zoneId);
+    setScheduleByZone((prev) => ({
+      ...prev,
+      [zoneKey]: cloneWeekSchedule(savedScheduleByZone[zoneKey] || createEmptyWeekSchedule()),
+    }));
+    if (Number.isInteger(Number(scheduleDayIndex))) {
+      showScheduleNotice(zoneId, scheduleDayIndex, 'saved', 'Week reset to saved schedule.', 2200);
+    } else {
+      dismissScheduleNotice();
+    }
   }
 
   function isScheduleDayExpanded(zoneId, dayIndex) {
@@ -1048,6 +1139,17 @@ export default function App() {
     scheduleZoneId !== null && scheduleDayIndex !== null
       ? !areScheduleWeeksEqual(currentWeek, savedWeek)
       : false;
+  const hasUnsavedWeekChanges =
+    scheduleZoneId !== null
+      ? !areScheduleWeeksEqual(currentWeek, savedWeek)
+      : false;
+  const hasUnsavedCurrentDayChanges =
+    scheduleZoneId !== null && scheduleDayIndex !== null
+      ? !areSchedulePeriodsEqual(
+        getDayPeriods(scheduleZoneId, scheduleDayIndex),
+        savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods || []
+      )
+      : false;
   const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
 
   if (activeTab === 'stats') {
@@ -1120,9 +1222,16 @@ export default function App() {
           setSchedulePeriodStart={setSchedulePeriodStart}
           setSchedulePeriodEnd={setSchedulePeriodEnd}
           saveScheduleDay={saveScheduleDay}
+          saveScheduleWeek={saveScheduleWeek}
           copyScheduleDayPattern={copyScheduleDayPattern}
+          resetScheduleDay={resetScheduleDay}
+          resetScheduleWeek={resetScheduleWeek}
           isScheduleSaving={scheduleZoneId !== null && Boolean(scheduleSavingByZone[String(scheduleZoneId)])}
           hasUnsavedScheduleChanges={hasUnsavedScheduleChanges}
+          hasUnsavedWeekChanges={hasUnsavedWeekChanges}
+          hasUnsavedCurrentDayChanges={hasUnsavedCurrentDayChanges}
+          scheduleNotice={scheduleNotice}
+          dismissScheduleNotice={dismissScheduleNotice}
           savedDayPeriods={savedDayPeriods}
           getDayPeriods={getDayPeriods}
           renderBottomNav={renderBottomNav}
