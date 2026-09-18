@@ -8,7 +8,6 @@ From project root:
 
 - `npm run dev:web` -> web app on http://localhost:5173
 - `npm run dev:api` -> api on http://localhost:3001
-- `npm run dev:worker` -> worker loop (15-minute interval, immediate first tick)
 
 Web frontend in dev uses `/api` proxy to `http://localhost:3001`.
 
@@ -31,8 +30,7 @@ Services:
 ## Structure
 
 - `apps/web` - browser UI starter
-- `apps/api` - Node API starter
-- `apps/worker` - background polling starter
+- `apps/api` - Node API starter (+ built-in stats collector polling)
 - `packages/shared` - shared constants/types starter
 - `docs` - copied protocol and migration docs
 

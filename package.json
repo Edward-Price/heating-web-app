@@ -12,8 +12,7 @@
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
     "build:web": "npm --prefix apps/web run build",
-    "dev:api": "node apps/api/src/server.js",
-    "dev:worker": "node apps/worker/src/worker.js"
+    "dev:api": "node apps/api/src/server.js"
   },
   "dependencies": {
     "ws": "^8.19.0"

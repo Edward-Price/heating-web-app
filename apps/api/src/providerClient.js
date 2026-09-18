@@ -127,9 +127,9 @@ async function checkGatewayConnected(providerSession) {
         'Request-id': '1',
       },
     });
-    console.log('[debug] IsGatewayConnected ->', JSON.stringify(result.body));
+    console.log(`[api] gateway connectivity status=${result.statusCode}`);
   } catch (err) {
-    console.log('[debug] IsGatewayConnected failed ->', err && err.message ? err.message : err);
+    console.warn('[api] IsGatewayConnected failed ->', err && err.message ? err.message : err);
   }
 }
 
@@ -190,11 +190,9 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload, ti
           timeoutMs,
         });
         if (response && response.E) {
-          console.log(`[debug] variant rejected (stringGmi=${variant.useStringGmi}, omitPayload=${variant.omitPayload}) ->`, JSON.stringify(response.E));
           lastErrorResponse = response;
           continue;
         }
-        console.log(`[debug] variant succeeded (stringGmi=${variant.useStringGmi}, omitPayload=${variant.omitPayload})`);
         return response;
       } catch (err) {
         lastErr = err;

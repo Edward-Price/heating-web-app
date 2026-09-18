@@ -77,6 +77,16 @@ function requireSession(req, res) {
   return { token, session };
 }
 
+// Debug routes are operational instrumentation only. They are never exposed in
+// production: every /debug/* route requires ENABLE_DEBUG_PROVIDER_ROUTES=1.
+function requireDebugRoutes(req, res) {
+  if (!ENABLE_DEBUG_PROVIDER_ROUTES) {
+    sendJson(res, 404, { ok: false, error: 'Not found' });
+    return false;
+  }
+  return true;
+}
+
 function extractResponsePayload(message) {
   if (!message || typeof message !== 'object') return null;
   if (message.R !== undefined) return message.R;
@@ -634,6 +644,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathOnly === '/debug/time-tick') {
+      if (!requireDebugRoutes(req, res)) return;
       const auth = requireSession(req, res);
       if (!auth) return;
       const providerResponse = await timeTick(auth.session.providerSession, auth.session.seqState);
@@ -642,6 +653,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathOnly === '/debug/installations') {
+      if (!requireDebugRoutes(req, res)) return;
       const auth = requireSession(req, res);
       if (!auth) return;
       const result = await getInstallations(auth.session.providerSession);
@@ -650,6 +662,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathOnly === '/debug/user-info') {
+      if (!requireDebugRoutes(req, res)) return;
       const auth = requireSession(req, res);
       if (!auth) return;
       const result = await getUserInformation(auth.session.providerSession);
@@ -658,6 +671,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathOnly === '/debug/user-list') {
+      if (!requireDebugRoutes(req, res)) return;
       const auth = requireSession(req, res);
       if (!auth) return;
       const result = await getUserList(auth.session.providerSession);
