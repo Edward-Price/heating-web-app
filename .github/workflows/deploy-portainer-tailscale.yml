@@ -29,6 +29,30 @@ jobs:
             echo "Missing PORTAINER_WEBHOOK_URL secret"
             exit 1
           fi
+
+          webhook_authority="${PORTAINER_WEBHOOK_URL#*://}"
+          webhook_host_port="${webhook_authority%%/*}"
+          webhook_host="${webhook_host_port%%:*}"
+
+          if ! getent hosts "$webhook_host" >/dev/null; then
+            tailnet_ip="$(tailscale status --json | jq -r --arg host "$webhook_host" '
+              [
+                .Peer[]
+                | select(
+                    .HostName == $host
+                    or ((.DNSName // "") | rtrimstr(".") | startswith($host + "."))
+                  )
+                | .TailscaleIPs[]
+                | select(test("^[0-9.]+$"))
+              ][0] // empty
+            ')"
+            if [ -z "$tailnet_ip" ]; then
+              echo "Unable to resolve Portainer host through Tailscale"
+              exit 1
+            fi
+            printf '%s %s\n' "$tailnet_ip" "$webhook_host" | sudo tee -a /etc/hosts >/dev/null
+          fi
+
           curl --fail --show-error --silent \
             -X POST \
             "$PORTAINER_WEBHOOK_URL"
