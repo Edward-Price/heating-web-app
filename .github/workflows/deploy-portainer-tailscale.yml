@@ -20,7 +20,7 @@ jobs:
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          ping: homeserver
+          targets: homeserver
           timeout: 5m
 
       - name: Trigger Portainer stack webhook
