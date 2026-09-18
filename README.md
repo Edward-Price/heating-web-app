@@ -36,6 +36,17 @@ Services:
 - `packages/shared` - shared constants/types starter
 - `docs` - copied protocol and migration docs
 
+## Provider API documentation
+
+- [`docs/beanbag-live-swagger.md`](docs/beanbag-live-swagger.md) records the provider's
+  live Swagger/OpenAPI endpoint, system-discovery flow, important DTOs, and safe
+  inspection commands.
+- [`docs/securemtr-openapi.yaml`](docs/securemtr-openapi.yaml) contains confirmed REST
+  behavior.
+- [`docs/securemtr_asyncapi.yaml`](docs/securemtr_asyncapi.yaml) and
+  [`docs/securemtr_ws_catalog.md`](docs/securemtr_ws_catalog.md) document the WebSocket
+  protocol used after selecting a gateway.
+
 Next step: replace stubs with real API/WS + DB implementation from `docs/migration-checklist.md`.
 
 ## GitHub Action: Tailscale -> Portainer deploy

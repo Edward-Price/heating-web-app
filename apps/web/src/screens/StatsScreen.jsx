@@ -34,6 +34,7 @@ export default function StatsScreen({
   toggleDebugLayout,
   theme,
   onLogout,
+  onChangeSystem,
 }) {
   const statsPullProgress = Math.min(1, statsPullDistance / 56);
   const statsRingRadius = 10;
@@ -373,6 +374,7 @@ export default function StatsScreen({
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
+        onChangeSystem={onChangeSystem}
       />
     </main>
   );

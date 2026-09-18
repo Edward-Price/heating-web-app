@@ -8,7 +8,8 @@ export default function AppMenuDrawer({
   debugLayoutEnabled,
   toggleDebugLayout,
   theme,
-  onLogout
+  onLogout,
+  onChangeSystem
 }) {
   if (!menuOpen) return null;
 
@@ -31,6 +32,7 @@ export default function AppMenuDrawer({
           <Button variant="outline" className="w-full justify-start" onClick={toggleDebugLayout}>
             {`Debug layout: ${debugLayoutEnabled ? 'On' : 'Off'}`}
           </Button>
+          <Button variant="outline" className="w-full justify-start" onClick={onChangeSystem}>Choose a different system</Button>
           <Button variant="outline" className="w-full justify-start" onClick={onLogout}>Log out</Button>
         </div>
       </aside>

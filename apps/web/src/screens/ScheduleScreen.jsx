@@ -45,6 +45,7 @@ export default function ScheduleScreen({
   toggleDebugLayout,
   theme,
   onLogout,
+  onChangeSystem,
 }) {
   const TIME_STEPS = Array.from({ length: 145 }, (_v, idx) => idx / 6);
   const TEMP_STEPS = Array.from({ length: 43 }, (_v, idx) => 5 + idx * 0.5);
@@ -571,6 +572,7 @@ export default function ScheduleScreen({
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
+        onChangeSystem={onChangeSystem}
       />
     </main>
   );

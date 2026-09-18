@@ -41,10 +41,17 @@ Response:
 {
   "ok": true,
   "appSessionToken": "<local-session-token>",
+  "systems": [
+    {
+      "gatewayId": "179830859557900",
+      "name": "Home",
+      "serialNumber": "ABC123"
+    }
+  ],
   "provider": {
     "userId": 1905248,
     "sessionId": "2141539",
-    "gatewayId": "179830859557900",
+    "gatewayId": null,
     "loginResponse": {}
   }
 }
@@ -64,6 +71,37 @@ Response:
 ```json
 {
   "ok": true
+}
+```
+
+### `GET /systems`
+
+Returns every gateway from the provider login response. The API uses the provider's
+`GetInstallations` route to add the home name and serial number, with `GetHome` as a
+per-gateway name fallback.
+
+```json
+{
+  "ok": true,
+  "systems": [
+    {
+      "gatewayId": "179830859557900",
+      "name": "Home",
+      "serialNumber": "ABC123"
+    }
+  ],
+  "selectedGatewayId": null
+}
+```
+
+### `POST /systems/select`
+
+Selects the account gateway used by subsequent device, state, schedule, and write
+requests. The gateway must be one returned by `GET /systems`.
+
+```json
+{
+  "gatewayId": "179830859557900"
 }
 ```
 

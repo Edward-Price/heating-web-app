@@ -3,6 +3,8 @@
 Node API (Node 20+) with provider integration:
 
 - `POST /auth/login` (Beanbag MD5 login)
+- `GET /systems` (list the gateways/systems available to the account)
+- `POST /systems/select` (select the gateway used by provider calls)
 - `POST /auth/logout`
 - `GET /devices` (SI=11 HI=49)
 - `GET /state` (SI=1 HI=3)
@@ -36,6 +38,11 @@ curl -X POST http://localhost:3001/auth/login \
 Use returned token in `X-Session-Token`:
 
 ```bash
+curl http://localhost:3001/systems -H 'X-Session-Token: <token>'
+curl -X POST http://localhost:3001/systems/select \
+  -H 'Content-Type: application/json' \
+  -H 'X-Session-Token: <token>' \
+  -d '{"gatewayId":"<gateway-id>"}'
 curl http://localhost:3001/devices -H 'X-Session-Token: <token>'
 curl http://localhost:3001/state -H 'X-Session-Token: <token>'
 ```

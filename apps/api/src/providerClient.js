@@ -35,10 +35,10 @@ async function httpJson({ method, url, headers, body }) {
   };
 }
 
-async function login(email, password) {
+async function login(email, password, oi = 1550005) {
   const payload = {
     ULC: {
-      OI: 1550005,
+      OI: oi,
       P: md5Hex(password),
       NT: 'SetLogin',
       UEI: email,
@@ -66,19 +66,46 @@ async function login(email, password) {
 
   const token = body.D.JT;
   const sessionId = String(body.D.SI || '');
-  const gatewayId = body.D.GD && body.D.GD[0] ? String(body.D.GD[0].GMI || '') : '';
+  const systems = (Array.isArray(body.D.GD) ? body.D.GD : [])
+    .map((gateway, index) => {
+      const gatewayId = String((gateway && gateway.GMI) || '');
+      if (!gatewayId) return null;
+      return {
+        gatewayId,
+        name: String(
+          (gateway && (gateway.HN || gateway.LI || gateway.DN))
+          || `Heating system ${index + 1}`
+        ),
+        serialNumber: gateway && (gateway.GSN || gateway.SN)
+          ? String(gateway.GSN || gateway.SN)
+          : null,
+        raw: gateway,
+      };
+    })
+    .filter(Boolean);
 
-  if (!token || !sessionId || !gatewayId) {
-    throw new Error('Provider login failed: missing JT/SI/GMI');
+  if (!token || !sessionId || systems.length === 0) {
+    throw new Error('Provider login failed: missing JT/SI/GD');
   }
 
   return {
     token,
     sessionId,
-    gatewayId,
+    gatewayId: null,
+    systems,
     userId: body.D.UI || null,
     raw: body,
   };
+}
+
+function selectGateway(providerSession, gatewayId) {
+  const requestedId = String(gatewayId || '');
+  const system = (providerSession.systems || []).find((item) => item.gatewayId === requestedId);
+  if (!system) {
+    throw new Error('Heating system is not available for this account');
+  }
+  providerSession.gatewayId = system.gatewayId;
+  return system;
 }
 
 function nextMessageId(providerSession, state) {
@@ -89,7 +116,7 @@ function nextMessageId(providerSession, state) {
 async function checkGatewayConnected(providerSession) {
   const url = `${REST_BASE}/IsGatewayConnected?gatewayMacId=${encodeURIComponent(providerSession.gatewayId)}`;
   try {
-    await httpJson({
+    const result = await httpJson({
       method: 'GET',
       url,
       headers: {
@@ -100,8 +127,9 @@ async function checkGatewayConnected(providerSession) {
         'Request-id': '1',
       },
     });
-  } catch (_err) {
-    // Non-fatal preflight.
+    console.log('[debug] IsGatewayConnected ->', JSON.stringify(result.body));
+  } catch (err) {
+    console.log('[debug] IsGatewayConnected failed ->', err && err.message ? err.message : err);
   }
 }
 
@@ -115,6 +143,9 @@ function buildPacket({ providerSession, SI, HI, payload, useStringGmi, omitPaylo
 }
 
 async function sendProviderRequest(providerSession, state, { SI, HI, payload, timeoutMs = 12000 }) {
+  if (!providerSession.gatewayId) {
+    throw new Error('No heating system selected');
+  }
   await checkGatewayConnected(providerSession);
   const canOmitPayload = Array.isArray(payload) && payload.length === 0;
 
@@ -128,6 +159,7 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload, ti
   }
 
   let lastErr = null;
+  let lastErrorResponse = null;
   for (let round = 0; round < 2; round += 1) {
     for (const variant of variants) {
       const request = {
@@ -146,7 +178,7 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload, ti
       };
 
       try {
-        return await wsRequest({
+        const response = await wsRequest({
           wsUrl: WS_URL,
           subprotocol: WS_PROTOCOL,
           headers: {
@@ -157,6 +189,13 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload, ti
           request,
           timeoutMs,
         });
+        if (response && response.E) {
+          console.log(`[debug] variant rejected (stringGmi=${variant.useStringGmi}, omitPayload=${variant.omitPayload}) ->`, JSON.stringify(response.E));
+          lastErrorResponse = response;
+          continue;
+        }
+        console.log(`[debug] variant succeeded (stringGmi=${variant.useStringGmi}, omitPayload=${variant.omitPayload})`);
+        return response;
       } catch (err) {
         lastErr = err;
         const msg = err && err.message ? err.message : String(err);
@@ -172,6 +211,7 @@ async function sendProviderRequest(providerSession, state, { SI, HI, payload, ti
     await new Promise((resolve) => setTimeout(resolve, 160));
   }
 
+  if (lastErrorResponse) return lastErrorResponse;
   throw lastErr || new Error('Provider request failed');
 }
 
@@ -251,12 +291,82 @@ async function setZoneSchedule(providerSession, state, schedulePayload) {
   });
 }
 
+async function timeTick(providerSession, state) {
+  return sendProviderRequest(providerSession, state, {
+    SI: 103,
+    HI: 2,
+    payload: [Math.floor(Date.now() / 1000)],
+  });
+}
+
+async function getInstallations(providerSession) {
+  return httpJson({
+    method: 'GET',
+    url: `${REST_BASE}/GetInstallations`,
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${providerSession.token}`,
+      'Session-id': providerSession.sessionId,
+      'Request-id': '1',
+    },
+  });
+}
+
+async function getUserInformation(providerSession) {
+  return httpJson({
+    method: 'GET',
+    url: `${REST_BASE}/GetUserInformation`,
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${providerSession.token}`,
+      'Session-id': providerSession.sessionId,
+      'Request-id': '1',
+    },
+  });
+}
+
+async function getHome(providerSession, gatewayId) {
+  return httpJson({
+    method: 'GET',
+    url: `${REST_BASE}/GetHome?GatewayMACID=${encodeURIComponent(gatewayId)}`,
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${providerSession.token}`,
+      'Session-id': providerSession.sessionId,
+      'Request-id': '1',
+    },
+  });
+}
+
+async function getUserList(providerSession) {
+  return httpJson({
+    method: 'GET',
+    url: `${REST_BASE}/GetUserList`,
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${providerSession.token}`,
+      'Session-id': providerSession.sessionId,
+      'Request-id': '1',
+    },
+  });
+}
+
 module.exports = {
   login,
+  selectGateway,
   getDevices,
   getState,
   writeZoneTargetTemp,
   setHotWaterBoost,
+  getUserInformation,
+  getHome,
+  getUserList,
+  timeTick,
+  getInstallations,
   getZoneSchedule,
   setZoneSchedule,
 };

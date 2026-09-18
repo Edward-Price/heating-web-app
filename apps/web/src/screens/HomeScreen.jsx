@@ -24,6 +24,7 @@ export default function HomeScreen({
   toggleDebugLayout,
   theme,
   onLogout,
+  onChangeSystem,
   contentRef,
   onContentTouchStart,
   onContentTouchMove,
@@ -411,6 +412,7 @@ export default function HomeScreen({
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
+        onChangeSystem={onChangeSystem}
       />
     </main>
   );

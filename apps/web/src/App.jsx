@@ -51,6 +51,9 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('Please sign in.');
+  const [systems, setSystems] = useState([]);
+  const [selectedSystemId, setSelectedSystemId] = useState(null);
+  const [systemsLoading, setSystemsLoading] = useState(false);
   const [devices, setDevices] = useState([]);
   const [stateByDeviceId, setStateByDeviceId] = useState({});
   const [selectedZoneId, setSelectedZoneId] = useState(null);
@@ -79,6 +82,7 @@ export default function App() {
   const [layoutDebug, setLayoutDebug] = useState(null);
   const [layoutCopyStatus, setLayoutCopyStatus] = useState('');
   const isLoadingRef = useRef(false);
+  const isSystemsLoadingRef = useRef(false);
   const dialPointerIdRef = useRef(null);
   const scheduleScrollerRef = useRef(null);
   const contentRef = useRef(null);
@@ -90,6 +94,9 @@ export default function App() {
     setSessionToken('');
     localStorage.removeItem(STORAGE_KEY);
     setSelectedZoneId(null);
+    setSystems([]);
+    setSelectedSystemId(null);
+    setSystemsLoading(false);
     setScheduleZoneId(null);
     setScheduleDayIndex(null);
     setMenuOpen(false);
@@ -207,7 +214,33 @@ export default function App() {
     } finally {
       isLoadingRef.current = false;
     }
-  }, [apiGet, devices.length]);
+  }, [apiGet]);
+
+  const loadSystems = useCallback(async (tokenOverride) => {
+    if (isSystemsLoadingRef.current) return;
+    isSystemsLoadingRef.current = true;
+    setSystemsLoading(true);
+    try {
+      setStatus('Loading heating systems...');
+      const result = await apiGet('/systems', tokenOverride);
+      const fetchedSystems = Array.isArray(result.systems) ? result.systems : [];
+      setSystems(fetchedSystems);
+      const selectedId = result.selectedGatewayId ? String(result.selectedGatewayId) : null;
+      setSelectedSystemId(selectedId);
+      if (selectedId) {
+        await loadDashboard(tokenOverride);
+      } else {
+        setStatus(fetchedSystems.length ? 'Choose a heating system.' : 'No heating systems were found for this account.');
+      }
+    } catch (err) {
+      if (err && err.message !== 'Unauthorized') {
+        setStatus(`System load failed: ${String(err.message || err)}`);
+      }
+    } finally {
+      setSystemsLoading(false);
+      isSystemsLoadingRef.current = false;
+    }
+  }, [apiGet, loadDashboard]);
   const zones = useMemo(() => devices.filter((d) => d.type === 'zone'), [devices]);
   const scheduleDevices = useMemo(() => devices, [devices]);
 
@@ -315,9 +348,9 @@ export default function App() {
 
   useEffect(() => {
     if (sessionToken) {
-      void loadDashboard();
+      void loadSystems();
     }
-  }, [sessionToken, loadDashboard]);
+  }, [sessionToken, loadSystems]);
 
   useEffect(() => {
     if (!zones.length) return;
@@ -355,7 +388,9 @@ export default function App() {
       if (!res.ok || !data.ok) throw new Error(data.error || `Login failed (${res.status})`);
       setSessionToken(data.appSessionToken);
       localStorage.setItem(STORAGE_KEY, data.appSessionToken);
-      await loadDashboard(data.appSessionToken);
+      setSystems(Array.isArray(data.systems) ? data.systems : []);
+      setSelectedSystemId(null);
+      setStatus('Choose a heating system.');
     } catch (err) {
       setStatus(`Login failed: ${String(err.message || err)}`);
     }
@@ -371,6 +406,39 @@ export default function App() {
     }
     setSessionToken('');
     clearClientSession('Logged out.');
+  }
+
+  async function onSelectSystem(gatewayId) {
+    const system = systems.find((item) => String(item.gatewayId) === String(gatewayId));
+    try {
+      setStatus(`Loading ${system?.name || 'heating system'}...`);
+      await apiPost('/systems/select', { gatewayId: String(gatewayId) });
+      setSelectedSystemId(String(gatewayId));
+      setDevices([]);
+      setStateByDeviceId({});
+      setSelectedZoneId(null);
+      setScheduleZoneId(null);
+      setScheduleDayIndex(null);
+      setScheduleByZone({});
+      setSavedScheduleByZone({});
+      setScheduleIdByZone({});
+      setActiveTab('home');
+      await loadDashboard();
+    } catch (err) {
+      setSelectedSystemId(null);
+      setStatus(`System selection failed: ${String(err.message || err)}`);
+    }
+  }
+
+  function onChangeSystem() {
+    setMenuOpen(false);
+    setSelectedSystemId(null);
+    setSelectedZoneId(null);
+    setDevices([]);
+    setStateByDeviceId({});
+    setConnectionState('disconnected');
+    setActiveTab('home');
+    setStatus('Choose a heating system.');
   }
 
   async function writeTarget(zoneId, temp) {
@@ -1118,6 +1186,44 @@ export default function App() {
     );
   }
 
+  if (!selectedSystemId) {
+    return (
+      <>
+        <main className="mx-auto h-[100lvh] max-w-5xl overflow-y-auto px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8">
+          <header className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold">Choose a heating system</h1>
+              <p className="mt-1 text-sm text-muted">Select the system you want to view and control.</p>
+            </div>
+            <Button variant="outline" onClick={onLogout}>Log out</Button>
+          </header>
+
+          <section className="grid gap-3 md:grid-cols-2">
+            {systems.map((system) => (
+              <Card key={system.gatewayId} className="grid gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">{system.name || 'Heating system'}</h2>
+                  {system.serialNumber ? (
+                    <p className="mt-1 text-sm text-muted">Serial {system.serialNumber}</p>
+                  ) : null}
+                  <p className="mt-1 break-all text-xs text-muted">Gateway {system.gatewayId}</p>
+                </div>
+                <Button onClick={() => onSelectSystem(system.gatewayId)}>Load this system</Button>
+              </Card>
+            ))}
+          </section>
+
+          {systemsLoading ? <p className="mt-4 text-sm text-muted">Loading heating systems…</p> : null}
+          {!systemsLoading && systems.length === 0 ? (
+            <Button className="mt-4" variant="outline" onClick={() => loadSystems()}>Try again</Button>
+          ) : null}
+          <p className="mt-3 text-sm text-muted">{status}</p>
+        </main>
+        {renderLayoutDebugOverlay()}
+      </>
+    );
+  }
+
   const hotWater = devices.find((d) => d.type === 'hotWater');
   const connection = mapConnectionStatus(connectionState);
   const isErrorStatus = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
@@ -1186,6 +1292,7 @@ export default function App() {
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
           onLogout={onLogout}
+          onChangeSystem={onChangeSystem}
         />
         {renderLayoutDebugOverlay()}
       </>
@@ -1242,6 +1349,7 @@ export default function App() {
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
           onLogout={onLogout}
+          onChangeSystem={onChangeSystem}
         />
         {renderLayoutDebugOverlay()}
       </>
@@ -1269,6 +1377,7 @@ export default function App() {
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
         onLogout={onLogout}
+        onChangeSystem={onChangeSystem}
         contentRef={contentRef}
         onContentTouchStart={onContentTouchStart}
         onContentTouchMove={onContentTouchMove}

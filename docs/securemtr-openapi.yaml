@@ -6,6 +6,9 @@ info:
     This specification captures **only** behaviors **directly observed** in live captures
     of the Secure Controls Android app (`com.secure.heatConnect`) using the vendor’s
     Beanbag cloud. All IDs/tokens are placeholders (e.g., `{token}`, `{sessionId}`, `{gatewayID}`).
+    For the provider's live route catalogue and Swagger DTO notes, see
+    `beanbag-live-swagger.md`. The provider JSON is published at
+    `https://app.beanbag.online/swagger/v1/swagger.json`.
     The WebSocket application protocol messages are cataloged in `secure_controls_asyncapi_v1.2.0.yaml`.
 
 servers:

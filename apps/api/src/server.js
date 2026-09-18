@@ -25,12 +25,18 @@ loadEnvFile(path.resolve(process.cwd(), '.env'));
 
 const {
   login,
+  selectGateway,
   getDevices,
   getState,
   writeZoneTargetTemp,
   setHotWaterBoost,
   getZoneSchedule,
   setZoneSchedule,
+  timeTick,
+  getInstallations,
+  getHome,
+  getUserInformation,
+  getUserList,
 } = require('./providerClient');
 const { sendJson, readJson } = require('./http');
 const { appendSnapshot, queryZoneSeries } = require('./statsStore');
@@ -47,6 +53,8 @@ const PORT = process.env.API_PORT ? Number(process.env.API_PORT) : 3001;
 const STATS_POLL_MINUTES = process.env.STATS_POLL_MINUTES ? Number(process.env.STATS_POLL_MINUTES) : 15;
 const STATS_PROVIDER_EMAIL = process.env.STATS_PROVIDER_EMAIL || '';
 const STATS_PROVIDER_PASSWORD = process.env.STATS_PROVIDER_PASSWORD || '';
+const STATS_PROVIDER_GATEWAY_ID = process.env.STATS_PROVIDER_GATEWAY_ID || '';
+const ENABLE_DEBUG_PROVIDER_ROUTES = process.env.ENABLE_DEBUG_PROVIDER_ROUTES === '1';
 
 const collectorState = {
   providerSession: null,
@@ -74,6 +82,74 @@ function extractResponsePayload(message) {
   if (message.R !== undefined) return message.R;
   if (Array.isArray(message.P) && message.P.length > 1) return message.P[1];
   return null;
+}
+
+function parseInstallationSystems(result) {
+  const body = result && result.body;
+  const installations = body && Array.isArray(body.D) ? body.D : [];
+  return installations
+    .map((installation, index) => {
+      const gateway = installation && installation.GI;
+      const home = installation && installation.HD;
+      const gatewayId = String((gateway && gateway.GMI) || '');
+      if (!gatewayId) return null;
+      return {
+        gatewayId,
+        name: String((home && home.HN) || (gateway && gateway.GSN) || `Heating system ${index + 1}`),
+        serialNumber: gateway && gateway.GSN ? String(gateway.GSN) : null,
+      };
+    })
+    .filter(Boolean);
+}
+
+function parseHomeName(result) {
+  if (!result || result.statusCode !== 200 || !result.body) return null;
+  const payload = result.body.D;
+  const home = Array.isArray(payload) ? payload[0] : payload;
+  if (!home || typeof home !== 'object') return null;
+  const name = home.HN || (home.HD && home.HD.HN) || home.name;
+  return typeof name === 'string' && name.trim() ? name.trim() : null;
+}
+
+async function listSystems(providerSession) {
+  const byGatewayId = new Map(
+    (providerSession.systems || []).map((system) => [system.gatewayId, {
+      gatewayId: system.gatewayId,
+      name: system.name,
+      serialNumber: system.serialNumber || null,
+    }])
+  );
+
+  try {
+    const installationsResult = await getInstallations(providerSession);
+    if (installationsResult.statusCode === 200) {
+      for (const installation of parseInstallationSystems(installationsResult)) {
+        const existing = byGatewayId.get(installation.gatewayId);
+        if (existing) {
+          byGatewayId.set(installation.gatewayId, { ...existing, ...installation });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[api][systems] installation lookup failed', err && err.message ? err.message : err);
+  }
+
+  const homeResults = await Promise.allSettled(
+    Array.from(byGatewayId.keys()).map(async (gatewayId) => ({
+      gatewayId,
+      result: await getHome(providerSession, gatewayId),
+    }))
+  );
+  for (const homeResult of homeResults) {
+    if (homeResult.status !== 'fulfilled') continue;
+    const { gatewayId, result } = homeResult.value;
+    const homeName = parseHomeName(result);
+    if (!homeName) continue;
+    const existing = byGatewayId.get(gatewayId);
+    byGatewayId.set(gatewayId, { ...existing, name: homeName });
+  }
+
+  return Array.from(byGatewayId.values());
 }
 
 function parseDevices(providerResponse) {
@@ -143,6 +219,9 @@ async function runStatsCollectorTick() {
   try {
     if (!collectorState.providerSession) {
       collectorState.providerSession = await login(STATS_PROVIDER_EMAIL, STATS_PROVIDER_PASSWORD);
+      const collectorGatewayId = STATS_PROVIDER_GATEWAY_ID
+        || (collectorState.providerSession.systems[0] && collectorState.providerSession.systems[0].gatewayId);
+      selectGateway(collectorState.providerSession, collectorGatewayId);
       collectorState.seqState = { sequence: 0 };
       console.log('[api][stats] collector logged in');
     }
@@ -483,14 +562,16 @@ const server = http.createServer(async (req, res) => {
 
       const providerSession = await login(email, password);
       const appSessionToken = createSession(providerSession);
+      const systems = await listSystems(providerSession);
 
       sendJson(res, 200, {
         ok: true,
         appSessionToken,
+        systems,
         provider: {
           userId: providerSession.userId,
           sessionId: providerSession.sessionId,
-          gatewayId: providerSession.gatewayId,
+          gatewayId: null,
           loginResponse: sanitizeProviderLogin(providerSession.raw),
         },
       });
@@ -504,11 +585,137 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && pathOnly === '/debug/oi-scan') {
+      if (!ENABLE_DEBUG_PROVIDER_ROUTES) {
+        sendJson(res, 404, { ok: false, error: 'Not found' });
+        return;
+      }
+      const body = await readJson(req);
+      const email = typeof body.email === 'string' ? body.email.trim() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      if (!email || !password) {
+        sendJson(res, 400, { ok: false, error: 'email and password are required' });
+        return;
+      }
+
+      const baseOi = 1550005;
+      const offsets = [0, 1, -1, 2, -2, 3, -3, 5, -5, 10, -10, 100, -100];
+      const oiValues = offsets.map((o) => baseOi + o);
+
+      const results = [];
+      for (const oi of oiValues) {
+        try {
+          const providerSession = await login(email, password, oi);
+          selectGateway(providerSession, providerSession.systems[0].gatewayId);
+          const seqState = { sequence: 0 };
+          let devicesResponse;
+          try {
+            devicesResponse = await getDevices(providerSession, seqState);
+          } catch (err) {
+            results.push({ oi, loginOk: true, devicesError: err.message });
+            continue;
+          }
+          const providerError = extractProviderError(devicesResponse);
+          const devices = parseDevices(devicesResponse);
+          results.push({
+            oi,
+            loginOk: true,
+            gatewayId: providerSession.gatewayId,
+            devicesError: providerError,
+            deviceCount: devices.length,
+          });
+        } catch (err) {
+          results.push({ oi, loginOk: false, error: err.message });
+        }
+      }
+
+      sendJson(res, 200, { ok: true, results });
+      return;
+    }
+
+    if (req.method === 'GET' && pathOnly === '/debug/time-tick') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const providerResponse = await timeTick(auth.session.providerSession, auth.session.seqState);
+      sendJson(res, 200, { ok: true, providerResponse });
+      return;
+    }
+
+    if (req.method === 'GET' && pathOnly === '/debug/installations') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const result = await getInstallations(auth.session.providerSession);
+      sendJson(res, 200, { ok: true, result });
+      return;
+    }
+
+    if (req.method === 'GET' && pathOnly === '/debug/user-info') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const result = await getUserInformation(auth.session.providerSession);
+      sendJson(res, 200, { ok: true, result });
+      return;
+    }
+
+    if (req.method === 'GET' && pathOnly === '/debug/user-list') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const result = await getUserList(auth.session.providerSession);
+      sendJson(res, 200, { ok: true, result });
+      return;
+    }
+
+    if (req.method === 'GET' && pathOnly === '/systems') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const systems = await listSystems(auth.session.providerSession);
+      sendJson(res, 200, {
+        ok: true,
+        systems,
+        selectedGatewayId: auth.session.providerSession.gatewayId,
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && pathOnly === '/systems/select') {
+      const auth = requireSession(req, res);
+      if (!auth) return;
+      const body = await readJson(req);
+      const gatewayId = typeof body.gatewayId === 'string' || typeof body.gatewayId === 'number'
+        ? String(body.gatewayId)
+        : '';
+      if (!gatewayId) {
+        sendJson(res, 400, { ok: false, error: 'gatewayId is required' });
+        return;
+      }
+
+      try {
+        const system = selectGateway(auth.session.providerSession, gatewayId);
+        auth.session.seqState = { sequence: 0 };
+        sendJson(res, 200, {
+          ok: true,
+          system: { gatewayId: system.gatewayId, name: system.name },
+        });
+      } catch (err) {
+        sendJson(res, 404, { ok: false, error: err.message });
+      }
+      return;
+    }
+
     if (req.method === 'GET' && pathOnly === '/devices') {
       const auth = requireSession(req, res);
       if (!auth) return;
 
       const providerResponse = await getDevices(auth.session.providerSession, auth.session.seqState);
+      const providerError = extractProviderError(providerResponse);
+      if (providerError) {
+        sendJson(res, 502, {
+          ok: false,
+          error: `Provider rejected devices request (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          providerResponse,
+        });
+        return;
+      }
       const devices = parseDevices(providerResponse);
       sendJson(res, 200, { ok: true, devices, providerResponse });
       return;
@@ -519,6 +726,15 @@ const server = http.createServer(async (req, res) => {
       if (!auth) return;
 
       const providerResponse = await getState(auth.session.providerSession, auth.session.seqState);
+      const providerError = extractProviderError(providerResponse);
+      if (providerError) {
+        sendJson(res, 502, {
+          ok: false,
+          error: `Provider rejected state request (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          providerResponse,
+        });
+        return;
+      }
       const stateByDeviceId = parseState(providerResponse);
       sendJson(res, 200, { ok: true, stateByDeviceId, providerResponse });
       return;
