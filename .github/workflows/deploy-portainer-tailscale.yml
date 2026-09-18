@@ -24,13 +24,19 @@ jobs:
       - name: Trigger Portainer stack webhook
         env:
           PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+          # Stable Tailscale IP for the homeserver. We use the raw tailnet IP
+          # (not MagicDNS) because GitHub-hosted runners cannot reliably resolve
+          # *.ts.net hostnames, which caused "Could not resolve host".
+          HOMESERVER_TS_IP: "100.104.198.91"
         run: |
           if [ -z "$PORTAINER_WEBHOOK_URL" ]; then
             echo "Missing PORTAINER_WEBHOOK_URL secret"
             exit 1
           fi
 
-          PORTAINER_WEBHOOK_URL="${PORTAINER_WEBHOOK_URL//homeserver/homeserver.tailbc4762.ts.net}"
+          PORTAINER_WEBHOOK_URL="${PORTAINER_WEBHOOK_URL//homeserver/$HOMESERVER_TS_IP}"
+          # Give Tailscale a moment to establish the route to the homeserver.
+          tailscale ping --timeout=10s "$HOMESERVER_TS_IP" >/dev/null 2>&1 || true
           curl --fail --show-error --silent \
             -X POST \
             "$PORTAINER_WEBHOOK_URL"
