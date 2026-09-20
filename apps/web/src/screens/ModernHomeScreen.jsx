@@ -1,72 +1,34 @@
-import { Menu, Thermometer, Waves } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { Menu, Thermometer, Waves, ChevronRight, CircleAlert } from 'lucide-react';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
 
-export default function ModernHomeScreen({
-  zones,
-  hotWater,
-  stateByDeviceId,
-  zoneState,
-  formatTemperature,
-  connection,
-  status,
-  setSelectedZoneId,
-  writeHotWater,
-  renderBottomNav,
-  menuOpen,
-  setMenuOpen,
-  toggleTheme,
-  debugLayoutEnabled,
-  toggleDebugLayout,
-  theme,
-  designMode,
-  toggleDesignMode,
-  onLogout,
-  onChangeSystem,
-  isDashboardLoading,
-}) {
-  const connected = connection?.label || 'Connecting';
+function StatusPill({ heating }) {
+  return <span className={heating ? 'modern-status modern-status--active' : 'modern-status'}><span className="modern-status__dot" />{heating ? 'Heating now' : 'Holding steady'}</span>;
+}
+
+export default function ModernHomeScreen({ zones, hotWater, stateByDeviceId, zoneState, formatTemperature, connection, status, setSelectedZoneId, writeHotWater, renderBottomNav, menuOpen, setMenuOpen, toggleTheme, debugLayoutEnabled, toggleDebugLayout, theme, designMode, toggleDesignMode, onLogout, onChangeSystem, isDashboardLoading }) {
+  const activeZones = zones.filter((zone) => Boolean(zoneState(stateByDeviceId, zone.id).heatingOn)).length;
+  const connectionLabel = connection?.label || 'Connecting';
+  const hasError = connection?.label === 'Error' || connection?.label === 'Offline';
+
   return (
-    <main className="min-h-screen bg-slate-50 pb-24 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
-      <div className="mx-auto max-w-5xl px-4 pb-8 pt-5 sm:px-6">
-        <header className="mb-6 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Home climate</p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Your home</h1>
-            <div className="mt-2 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-              <span className={`h-2 w-2 rounded-full ${connection?.dotClass || 'bg-slate-400'}`} />
-              <span>{connected}</span>
-            </div>
-          </div>
-          <Button size="icon" variant="outline" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
+    <main className="modern-shell">
+      <div className="modern-page">
+        <header className="modern-header">
+          <div><p className="modern-eyebrow">Heating control</p><h1 className="modern-title">Home</h1><div className="modern-connection"><span className={hasError ? 'modern-connection__dot modern-connection__dot--error' : 'modern-connection__dot'} />{connectionLabel}</div></div>
+          <button className="modern-icon-button" type="button" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu size={21} strokeWidth={1.8} /></button>
         </header>
 
-        <section className="mb-6 rounded-3xl bg-slate-900 p-5 text-white shadow-xl shadow-slate-900/10 dark:bg-slate-800">
-          <div className="flex items-center gap-2 text-sm text-slate-300"><Thermometer className="h-4 w-4" /> System status</div>
-          <p className="mt-3 text-2xl font-semibold">{isDashboardLoading ? 'Updating your home…' : zones.length ? 'Comfort is in your hands' : 'No zones connected'}</p>
-          <p className="mt-1 text-sm text-slate-400">{status || 'Tap a zone to adjust its target temperature.'}</p>
+        <section className="modern-overview" aria-live="polite">
+          <div className="modern-overview__icon"><Thermometer size={20} strokeWidth={1.8} /></div>
+          <div><p className="modern-overview__label">System overview</p><h2>{isDashboardLoading ? 'Updating your home' : zones.length ? (activeZones ? `${activeZones} zone${activeZones === 1 ? '' : 's'} heating` : 'Home is comfortable') : 'No zones connected'}</h2><p>{status || (activeZones ? 'Your heating is actively warming the home.' : 'All zones are holding their target temperature.')}</p></div>
         </section>
 
-        <section>
-          <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">Zones</h2><span className="text-sm text-slate-500 dark:text-slate-400">{zones.length} active</span></div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {zones.map((zone) => {
-              const state = zoneState(stateByDeviceId, zone.id);
-              const heating = Boolean(state.heatingOn);
-              return (
-                <button key={zone.id} type="button" onClick={() => setSelectedZoneId(zone.id)} className="text-left">
-                  <Card className="rounded-2xl border-slate-200 p-4 transition hover:-translate-y-0.5 hover:border-slate-400 hover:shadow-md dark:border-slate-700">
-                    <div className="flex items-start justify-between gap-3"><div><p className="text-base font-semibold">{zone.name}</p><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{heating ? 'Heating now' : 'Holding steady'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${heating ? 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>{heating ? 'Heating' : 'Idle'}</span></div>
-                    <div className="mt-6 flex items-end justify-between"><span className="text-4xl font-semibold tracking-tight">{formatTemperature(state.currentTemp)}</span><span className="text-sm text-slate-500 dark:text-slate-400">Target {formatTemperature(state.targetTemp)}</span></div>
-                  </Card>
-                </button>
-              );
-            })}
-          </div>
+        <section className="modern-section"><div className="modern-section__heading"><div><p className="modern-eyebrow">Your home</p><h2>Rooms</h2></div><span className="modern-count">{zones.length} {zones.length === 1 ? 'room' : 'rooms'}</span></div>
+          <div className="modern-room-grid">{zones.map((zone) => { const state = zoneState(stateByDeviceId, zone.id); const heating = Boolean(state.heatingOn); return <button key={zone.id} type="button" className="modern-room" onClick={() => setSelectedZoneId(zone.id)}><div className="modern-room__top"><div><h3>{zone.name}</h3><StatusPill heating={heating} /></div><ChevronRight className="modern-room__arrow" size={20} strokeWidth={1.7} /></div><div className="modern-room__temperatures"><span className="modern-room__current">{formatTemperature(state.currentTemp)}</span><span className="modern-room__target">Target <strong>{formatTemperature(state.targetTemp)}</strong></span></div></button>; })}</div>
         </section>
 
-        {hotWater ? (() => { const state = zoneState(stateByDeviceId, hotWater.id); return <Card className="mt-4 rounded-2xl border-slate-200 p-4 dark:border-slate-700"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><Waves className="h-5 w-5 text-cyan-500" /><h2 className="font-semibold">{hotWater.name || 'Hot Water'}</h2></div><span className="text-sm text-slate-500">{state.hotWaterOn ? 'On' : 'Off'}</span></div><div className="mt-4 grid grid-cols-3 gap-2"><Button onClick={() => writeHotWater(hotWater.id, 60)}>Boost 1h</Button><Button onClick={() => writeHotWater(hotWater.id, 120)}>Boost 2h</Button><Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button></div></Card>; })() : null}
+        {hotWater ? (() => { const state = zoneState(stateByDeviceId, hotWater.id); return <section className="modern-water"><div className="modern-water__heading"><span className="modern-water__icon"><Waves size={19} strokeWidth={1.8} /></span><div><p className="modern-eyebrow">Hot water</p><h2>{hotWater.name || 'Hot Water'}</h2></div><span className={state.hotWaterOn ? 'modern-water__state modern-water__state--on' : 'modern-water__state'}>{state.hotWaterOn ? 'On' : 'Off'}</span></div><div className="modern-water__actions"><button type="button" onClick={() => writeHotWater(hotWater.id, 60)}>Boost 1 hour</button><button type="button" onClick={() => writeHotWater(hotWater.id, 120)}>Boost 2 hours</button><button type="button" className="modern-button--quiet" onClick={() => writeHotWater(hotWater.id, 0)}>Turn off</button></div></section>; })() : null}
+        {!zones.length && !isDashboardLoading ? <div className="modern-empty"><CircleAlert size={20} /><span>{status || 'No heating zones are available.'}</span></div> : null}
       </div>
       {renderBottomNav()}
       <AppMenuDrawer menuOpen={menuOpen} setMenuOpen={setMenuOpen} toggleTheme={toggleTheme} debugLayoutEnabled={debugLayoutEnabled} toggleDebugLayout={toggleDebugLayout} theme={theme} designMode={designMode} toggleDesignMode={toggleDesignMode} onLogout={onLogout} onChangeSystem={onChangeSystem} />
