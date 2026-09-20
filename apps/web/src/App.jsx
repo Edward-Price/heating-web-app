@@ -4,6 +4,7 @@ import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
 import HomeScreen from './screens/HomeScreen';
+import ModernHomeScreen from './screens/ModernHomeScreen';
 import StatsScreen from './screens/StatsScreen';
 import ScheduleScreen from './screens/ScheduleScreen';
 import { zoneState, formatTemperature, mapConnectionStatus } from './lib/deviceUtils';
@@ -29,6 +30,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
 const THEME_STORAGE_KEY = 'heating-web-theme';
+const DESIGN_STORAGE_KEY = 'heating-web-design';
 const DEBUG_LAYOUT_STORAGE_KEY = 'heating-web-debug-layout';
 const SCHEDULE_COLORS = [
   { bg: 'bg-sky-50', text: 'text-sky-700', bar: 'bg-sky-400', chip: 'bg-sky-500' },
@@ -60,6 +62,7 @@ export default function App() {
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) || 'light');
+  const [designMode, setDesignMode] = useState(() => localStorage.getItem(DESIGN_STORAGE_KEY) || 'classic');
   const [activeTab, setActiveTab] = useState('home');
   const [scheduleZoneId, setScheduleZoneId] = useState(null);
   const [scheduleDayIndex, setScheduleDayIndex] = useState(null);
@@ -252,6 +255,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(DEBUG_LAYOUT_STORAGE_KEY, debugLayoutEnabled ? '1' : '0');
   }, [debugLayoutEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(DESIGN_STORAGE_KEY, designMode);
+  }, [designMode]);
 
   const collectLayoutSnapshot = useCallback(() => {
     if (!debugLayoutEnabled) return null;
@@ -466,6 +473,10 @@ export default function App() {
 
   function toggleTheme() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }
+
+  function toggleDesignMode() {
+    setDesignMode((prev) => (prev === 'modern' ? 'classic' : 'modern'));
   }
 
   function onSelectTab(tab) {
@@ -1257,6 +1268,7 @@ export default function App() {
       )
       : false;
   const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
+  const HomeComponent = designMode === 'modern' && !selectedZone ? ModernHomeScreen : HomeScreen;
 
   if (activeTab === 'stats') {
     return (
@@ -1288,6 +1300,8 @@ export default function App() {
           formatStatsAxisLabel={formatStatsAxisLabel}
           formatStatsTimestamp={formatStatsTimestamp}
           toggleTheme={toggleTheme}
+          designMode={designMode}
+          toggleDesignMode={toggleDesignMode}
           debugLayoutEnabled={debugLayoutEnabled}
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
@@ -1345,6 +1359,8 @@ export default function App() {
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           toggleTheme={toggleTheme}
+          designMode={designMode}
+          toggleDesignMode={toggleDesignMode}
           debugLayoutEnabled={debugLayoutEnabled}
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
@@ -1358,7 +1374,7 @@ export default function App() {
 
   return (
     <>
-      <HomeScreen
+      <HomeComponent
         selectedZone={selectedZone}
         zoneState={zoneState}
         stateByDeviceId={stateByDeviceId}
@@ -1373,6 +1389,8 @@ export default function App() {
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        designMode={designMode}
+        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

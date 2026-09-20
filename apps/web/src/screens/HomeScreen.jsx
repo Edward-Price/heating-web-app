@@ -20,6 +20,8 @@ export default function HomeScreen({
   menuOpen,
   setMenuOpen,
   toggleTheme,
+  designMode,
+  toggleDesignMode,
   debugLayoutEnabled,
   toggleDebugLayout,
   theme,
@@ -408,6 +410,8 @@ export default function HomeScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        designMode={designMode}
+        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

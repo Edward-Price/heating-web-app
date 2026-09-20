@@ -568,6 +568,8 @@ export default function ScheduleScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        designMode={designMode}
+        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

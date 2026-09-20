@@ -8,6 +8,8 @@ export default function AppMenuDrawer({
   debugLayoutEnabled,
   toggleDebugLayout,
   theme,
+  designMode = 'classic',
+  toggleDesignMode,
   onLogout,
   onChangeSystem
 }) {
@@ -28,6 +30,9 @@ export default function AppMenuDrawer({
           <Button variant="outline" className="w-full justify-start" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
             {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </Button>
+          <Button variant="outline" className="w-full justify-start" onClick={toggleDesignMode}>
+            {designMode === 'modern' ? 'Use Classic design' : 'Use Modern Utility design'}
           </Button>
           <Button variant="outline" className="w-full justify-start" onClick={toggleDebugLayout}>
             {`Debug layout: ${debugLayoutEnabled ? 'On' : 'Off'}`}

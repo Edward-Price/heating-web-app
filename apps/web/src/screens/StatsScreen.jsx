@@ -370,6 +370,8 @@ export default function StatsScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
+        designMode={designMode}
+        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
