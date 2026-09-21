@@ -1,112 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-html,
-body,
-#root {
-  height: 100vh;
-  height: 100dvh;
-  height: 100lvh;
-  min-height: 100vh;
-  min-height: 100dvh;
-  min-height: 100lvh;
-}
-
-html {
-  background: #f4f7fc;
-}
-
-body {
-  margin: 0;
-  overflow: hidden;
-  color: theme('colors.foreground');
-  background-color: #f4f7fc;
-  background: linear-gradient(180deg, #f4f7fc 0%, #f6f9fc 35%, #f6f9fc 100%);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-
-html.dark {
-  background: #0b1220;
-}
-
-html.dark body {
-  color: #e2e8f0;
-  background-color: #0b1220;
-  background: linear-gradient(180deg, #0b1220 0%, #0f172a 45%, #0f172a 100%);
-}
-
-#root {
-  overflow: hidden;
-}
-
-html.dark .text-foreground {
-  color: #e2e8f0 !important;
-}
-
-html.dark .text-muted {
-  color: #94a3b8 !important;
-}
-
-html.dark .border-border {
-  border-color: #334155 !important;
-}
-
-/* Modern Utility design: intentionally independent from the Classic theme. */
-.modern-shell {
-  --modern-ink: #1f2933;
-  --modern-muted: #68737d;
-  --modern-line: #dfe4e7;
-  --modern-paper: #fbfcfb;
-  --modern-warm: #d97706;
-  height: 100dvh;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  background: #f3f5f3;
-  color: var(--modern-ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.modern-page { width: min(100% - 32px, 980px); margin: 0 auto; padding: 34px 0 128px; }
-.modern-header, .modern-section__heading, .modern-room__top, .modern-water__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.modern-eyebrow { margin: 0 0 6px; color: var(--modern-muted); font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-.modern-title { margin: 0; font-size: clamp(32px, 6vw, 48px); font-weight: 560; letter-spacing: -.055em; line-height: 1; }
-.modern-connection { display: flex; align-items: center; gap: 8px; margin-top: 15px; color: var(--modern-muted); font-size: 13px; }
-.modern-connection__dot, .modern-status__dot { width: 8px; height: 8px; border-radius: 50%; background: #5c8b68; }
-.modern-connection__dot--error { background: #c2413c; }
-.modern-icon-button { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--modern-line); border-radius: 12px; color: var(--modern-ink); background: var(--modern-paper); cursor: pointer; }
-.modern-icon-button:hover { border-color: #aab4b8; }
-.modern-overview { display: flex; gap: 16px; align-items: flex-start; margin-top: 38px; padding: 24px; border: 1px solid #d6e0dc; border-radius: 18px; background: #e7efeb; }
-.modern-overview__icon { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 12px; color: #38654a; background: #d1e2d8; }
-.modern-overview h2, .modern-water h2 { margin: 0; font-size: 20px; font-weight: 620; letter-spacing: -.025em; }
-.modern-overview p:last-child { margin: 7px 0 0; color: #5b6d63; font-size: 14px; }
-.modern-overview__label { margin: 0 0 5px; color: #527160; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-.modern-section { margin-top: 42px; }
-.modern-section__heading { align-items: flex-end; margin-bottom: 14px; }
-.modern-section__heading h2 { margin: 0; font-size: 25px; font-weight: 590; letter-spacing: -.035em; }
-.modern-count { color: var(--modern-muted); font-size: 13px; }
-.modern-room-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.modern-room { min-height: 182px; padding: 20px; border: 1px solid var(--modern-line); border-radius: 15px; color: var(--modern-ink); background: var(--modern-paper); text-align: left; cursor: pointer; transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
-.modern-room:hover { border-color: #abb8b2; box-shadow: 0 8px 24px rgba(44, 57, 50, .08); transform: translateY(-2px); }
-.modern-room h3 { margin: 0 0 10px; font-size: 17px; font-weight: 650; }
-.modern-room__arrow { color: #8b9699; }
-.modern-status { display: inline-flex; align-items: center; gap: 7px; color: var(--modern-muted); font-size: 12px; }
-.modern-status--active { color: #a75b0b; }
-.modern-status--active .modern-status__dot { background: #d97706; }
-.modern-room__temperatures { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 42px; }
-.modern-room__current { font-size: 38px; font-weight: 520; letter-spacing: -.06em; }
-.modern-room__target { color: var(--modern-muted); font-size: 12px; }
-.modern-room__target strong { display: block; margin-top: 3px; color: var(--modern-ink); font-size: 15px; font-weight: 620; }
-.modern-water { margin-top: 12px; padding: 20px; border: 1px solid var(--modern-line); border-radius: 15px; background: var(--modern-paper); }
-.modern-water__heading { align-items: center; }
-.modern-water__icon { display: grid; place-items: center; width: 38px; height: 38px; margin-right: -7px; border-radius: 11px; color: #3b7280; background: #e1eff0; }
-.modern-water__state { margin-left: auto; color: var(--modern-muted); font-size: 13px; }
-.modern-water__state--on { color: #3b7280; font-weight: 700; }
-.modern-water__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.modern-water__actions button { min-height: 40px; padding: 0 14px; border: 1px solid #b8c9c3; border-radius: 9px; color: #315744; background: #edf4ef; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
-.modern-water__actions button:hover { background: #e0ece4; }
-.modern-water__actions .modern-button--quiet { color: var(--modern-muted); border-color: var(--modern-line); background: transparent; }
-.modern-empty { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 16px; border: 1px solid #e7c7a8; border-radius: 12px; color: #8a5d31; background: #fff6eb; font-size: 14px; }
-@media (max-width: 640px) { .modern-page { width: min(100% - 24px, 980px); padding-top: 24px; } .modern-overview { margin-top: 28px; padding: 18px; } .modern-room-grid { grid-template-columns: 1fr; } .modern-room { min-height: 164px; } .modern-room__temperatures { margin-top: 32px; } .modern-water__actions { display: grid; grid-template-columns: 1fr 1fr; } .modern-water__actions button:last-child { grid-column: 1 / -1; } }
-@media (prefers-reduced-motion: reduce) { .modern-room { transition: none; } }
+html,body,#root{height:100vh;height:100dvh;height:100lvh;min-height:100vh;min-height:100dvh;min-height:100lvh}
+html{background:#f4f7fc} body{margin:0;overflow:hidden;color:theme('colors.foreground');background:#f4f7fc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}html.dark{background:#0b1220}html.dark body{color:#e2e8f0;background:#0b1220}#root{overflow:hidden}html.dark .text-foreground{color:#e2e8f0!important}html.dark .text-muted{color:#94a3b8!important}html.dark .border-border{border-color:#334155!important}
+/* Modern design system: deliberately separate from Classic utility styles. */
+.modern-shell{--m-ink:#17212b;--m-muted:#71808b;--m-line:#d9e1e5;--m-paper:#fff;--m-blue:#2864f0;--m-orange:#f06d3d;min-height:100dvh;height:100dvh;overflow-y:auto;overscroll-behavior-y:contain;background:linear-gradient(150deg,#f2f6fb 0%,#f7f9fc 55%,#edf3f8 100%);color:var(--m-ink);font-family:Inter,ui-sans-serif,system-ui,sans-serif}.modern-page{width:min(calc(100% - 32px),900px);margin:auto;padding:32px 0 132px}.modern-header,.modern-section__heading,.modern-water__heading,.modern-hero__top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.modern-eyebrow{margin:0 0 7px;color:var(--m-muted);font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.modern-title{margin:0;font-size:clamp(30px,6vw,44px);font-weight:700;letter-spacing:-.06em;line-height:1}.modern-connection{display:flex;align-items:center;gap:7px;margin-top:14px;color:var(--m-muted);font-size:13px}.modern-connection__dot,.modern-status__dot{width:7px;height:7px;border-radius:50%;background:#36a269}.modern-connection__dot--error{background:#db4d55}.modern-icon-button{display:grid;place-items:center;width:44px;height:44px;border:1px solid var(--m-line);border-radius:14px;color:var(--m-ink);background:#fff;cursor:pointer;box-shadow:0 4px 14px #273b5210}.modern-hero{position:relative;margin-top:32px;padding:26px 28px 22px;border:1px solid #d5e0eb;border-radius:28px;background:linear-gradient(145deg,#edf5ff,#fff 68%);box-shadow:0 20px 45px #304b6814}.modern-hero__badge{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:99px;color:#3670d9;background:#e2edff;font-size:12px;font-weight:750}.modern-status{display:inline-flex;align-items:center;gap:7px;color:var(--m-muted);font-size:12px}.modern-status--active{color:#d35b32}.modern-status--active .modern-status__dot{background:var(--m-orange);box-shadow:0 0 0 4px #f06d3d22}.modern-hero__temperature{display:flex;align-items:baseline;gap:12px;margin-top:28px}.modern-hero__temperature span{font-size:clamp(76px,16vw,132px);font-weight:700;letter-spacing:-.1em;line-height:.9}.modern-hero__temperature small{color:var(--m-muted);font-size:15px}.modern-hero__target{display:flex;justify-content:space-between;margin-top:20px;padding-top:16px;border-top:1px solid #dbe5ef;color:var(--m-muted);font-size:13px}.modern-hero__target span:first-child{color:var(--m-ink);font-weight:700}.modern-hero__controls{display:flex;align-items:center;justify-content:space-between;margin-top:22px;padding:10px;border-radius:17px;background:#f4f7fa}.modern-hero__controls button{display:grid;place-items:center;width:44px;height:44px;border:0;border-radius:12px;color:#255ed6;background:#fff;box-shadow:0 3px 10px #2e4d6c16;cursor:pointer}.modern-hero__controls div{text-align:center}.modern-hero__controls span{display:block;color:var(--m-muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}.modern-hero__controls strong{display:block;margin-top:3px;font-size:23px}.modern-hero__note{margin:16px 0 0;color:var(--m-muted);font-size:13px}.modern-section{margin-top:34px}.modern-section__heading{align-items:end;margin-bottom:13px}.modern-section__heading h2{margin:0;font-size:24px;letter-spacing:-.04em}.modern-count{color:var(--m-muted);font-size:13px}.modern-room-list{overflow:hidden;border:1px solid var(--m-line);border-radius:18px;background:#fff}.modern-room-row{display:flex;align-items:center;width:100%;gap:13px;padding:16px;border:0;border-bottom:1px solid #e8edf0;color:var(--m-ink);background:#fff;text-align:left;cursor:pointer}.modern-room-row:last-child{border-bottom:0}.modern-room-row:hover{background:#f7faff}.modern-room-row__icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;color:#3475df;background:#e8f0ff}.modern-room-row__main{display:grid;gap:5px;flex:1}.modern-room-row__main strong{font-size:15px}.modern-room-row__temp{display:grid;text-align:right;font-size:19px;font-weight:750}.modern-room-row__temp small{color:var(--m-muted);font-size:10px;font-weight:500}.modern-water{margin-top:18px;padding:20px;border:1px solid #cfe3e8;border-radius:20px;background:#f0fafb}.modern-water h2{margin:0;font-size:18px}.modern-water__heading{align-items:center}.modern-water__icon{display:grid;place-items:center;width:38px;height:38px;margin-right:-7px;border-radius:12px;color:#147c91;background:#d9f1f3}.modern-water__state{margin-left:auto;color:var(--m-muted);font-size:13px}.modern-water__state--on{color:#147c91;font-weight:750}.modern-water__actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.modern-water__actions button{min-height:40px;padding:0 14px;border:1px solid #acd5db;border-radius:10px;color:#17677a;background:#fff;font:inherit;font-size:13px;font-weight:700;cursor:pointer}.modern-water__actions .modern-button--quiet{color:var(--m-muted);border-color:#cfe3e8;background:transparent}.modern-empty{display:flex;align-items:center;gap:10px;margin-top:24px;padding:16px;border:1px solid #edc8ae;border-radius:14px;color:#98613b;background:#fff7ef;font-size:14px}
+/* Modern schedule/history keeps existing controls but gives them an app shell. */
+.modern-schedule,.modern-stats{background:linear-gradient(150deg,#f2f6fb,#f8fafc);color:var(--m-ink)}
+.modern-schedule [class*="rounded"],.modern-stats [class*="rounded"]{border-radius:16px}.modern-schedule .text-foreground,.modern-stats .text-foreground{color:var(--m-ink)}
+.modern-detail{background:linear-gradient(150deg,#f2f6fb,#f8fafc);color:var(--m-ink)}.modern-detail>div:first-of-type{padding-top:18px}.modern-detail h2{font-size:32px;letter-spacing:-.06em}.modern-detail .rounded-lg,.modern-detail .rounded-xl{border:1px solid #d5e0eb;background:#fff;box-shadow:0 18px 40px #304b6810}.modern-detail .text-5xl{font-size:64px;letter-spacing:-.08em}.modern-detail .bg-gradient-to-r{background:linear-gradient(100deg,#2864f0,#6b8df7)}.modern-detail .text-muted{color:var(--m-muted)}.modern-detail .grid.grid-cols-2{padding:16px;border-radius:18px;background:#eef4fa}.modern-detail .grid.grid-cols-2>div{padding:4px 8px}.modern-detail .grid.grid-cols-2>div+div{border-left:1px solid #d8e2ec}.modern-detail .rounded-full{border-color:#d6e1eb}
+@media(max-width:640px){.modern-page{width:calc(100% - 24px);padding-top:24px}.modern-hero{padding:22px 18px;border-radius:23px}.modern-hero__temperature span{font-size:88px}.modern-water__actions{display:grid;grid-template-columns:1fr 1fr}.modern-water__actions button:last-child{grid-column:1/-1}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}

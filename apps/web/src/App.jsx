@@ -1274,6 +1274,7 @@ export default function App() {
     return (
       <>
         <StatsScreen
+          modern={designMode === 'modern'}
           zones={zones}
           statsPullDistance={statsPullDistance}
           isStatsRefreshing={isStatsRefreshing}
@@ -1317,6 +1318,7 @@ export default function App() {
     return (
       <>
         <ScheduleScreen
+          modern={designMode === 'modern'}
           scheduleZone={scheduleZone}
           scheduleIsBinary={scheduleIsBinary}
           isScheduleZoneLoading={isScheduleZoneLoading}

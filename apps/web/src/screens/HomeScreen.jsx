@@ -138,7 +138,7 @@ export default function HomeScreen({
     };
 
     return (
-      <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8">
+      <main className={`${designMode === 'modern' ? 'modern-detail ' : ''}mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8`}>
         <div
           className="min-h-0 flex-1 overflow-y-auto pb-40"
           onTouchStart={onDetailTouchStart}

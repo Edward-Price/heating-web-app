@@ -5,6 +5,7 @@ import { Card } from '../components/ui/card';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
 
 export default function ScheduleScreen({
+  modern = false,
   scheduleZone,
   scheduleIsBinary,
   isScheduleZoneLoading,
@@ -136,7 +137,7 @@ export default function ScheduleScreen({
   };
 
   return (
-    <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
+    <main className={`${modern ? 'modern-schedule ' : ''}mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8`}>
       <header className="fixed inset-x-0 top-0 z-30">
         <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
           <div className="mb-1 flex items-center justify-between">
