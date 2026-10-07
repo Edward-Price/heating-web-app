@@ -5,6 +5,8 @@ const Database = require('better-sqlite3');
 const DEFAULT_DB_PATH = path.resolve(__dirname, '../../data/stats.sqlite');
 const LEGACY_JSONL_PATH = path.resolve(__dirname, '../../data/stats.jsonl');
 const DB_PATH = process.env.STATS_DB_PATH || DEFAULT_DB_PATH;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_TZ_OFFSET_MINUTES = 14 * 60;
 
 function ensureDbDir() {
   const dir = path.dirname(DB_PATH);
@@ -159,7 +161,9 @@ const readRangeStmt = db.prepare(`
   ORDER BY ts ASC
 `);
 
-function queryZoneSeries({ zoneId, range = 'day', anchor }) {
+// `tzOffsetMinutes` uses Date#getTimezoneOffset semantics (UTC minus local, e.g. -60 for BST), so day and
+// month windows line up with the viewer's local midnight rather than UTC midnight.
+function queryZoneSeries({ zoneId, range = 'day', anchor, tzOffsetMinutes = 0 }) {
   const id = Number(zoneId);
   if (!Number.isFinite(id)) {
     return {
@@ -173,30 +177,36 @@ function queryZoneSeries({ zoneId, range = 'day', anchor }) {
     };
   }
 
+  const offsetMinutes = Number(tzOffsetMinutes);
+  const offsetMs = Number.isFinite(offsetMinutes) && Math.abs(offsetMinutes) <= MAX_TZ_OFFSET_MINUTES
+    ? offsetMinutes * 60 * 1000
+    : 0;
   const anchorTs = parseAnchor(range, anchor);
   let from = startOfUtcDay(anchorTs);
-  let to = from + 24 * 60 * 60 * 1000;
+  let to = from + DAY_MS;
 
   if (range === 'month') {
     from = startOfUtcMonth(anchorTs);
     const d = new Date(from);
     to = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
   }
+  from += offsetMs;
+  to += offsetMs;
 
   // Only return genuine recorded samples. No fabricated/dummy data.
   const dbRows = readRangeStmt.all(id, from, to);
 
   let points = dbRows.map((row) => ({
-      timestamp: new Date(Number(row.ts)).toISOString(),
-      ts: Number(row.ts),
-      currentTemp: Number.isFinite(Number(row.currentTemp)) ? row.currentTemp : null,
-      targetTemp: Number.isFinite(Number(row.targetTemp)) ? row.targetTemp : null,
-    }));
+    timestamp: new Date(Number(row.ts)).toISOString(),
+    ts: Number(row.ts),
+    currentTemp: Number.isFinite(Number(row.currentTemp)) ? Number(row.currentTemp) : null,
+    targetTemp: Number.isFinite(Number(row.targetTemp)) ? Number(row.targetTemp) : null,
+  }));
 
   if (range === 'month') {
     const byDay = new Map();
     for (const row of points) {
-      const dayKey = formatDayAnchor(Number(row.ts));
+      const dayKey = formatDayAnchor(Number(row.ts) - offsetMs);
       if (!byDay.has(dayKey)) {
         byDay.set(dayKey, { current: [], target: [] });
       }
@@ -214,9 +224,10 @@ function queryZoneSeries({ zoneId, range = 'day', anchor }) {
         const targetAvg = values.target.length
           ? values.target.reduce((sum, n) => sum + n, 0) / values.target.length
           : null;
+        const noonTs = Date.parse(`${dayKey}T12:00:00.000Z`) + offsetMs;
         return {
-          timestamp: `${dayKey}T12:00:00.000Z`,
-          ts: Date.parse(`${dayKey}T12:00:00.000Z`),
+          timestamp: new Date(noonTs).toISOString(),
+          ts: noonTs,
           currentTemp: currentAvg,
           targetTemp: targetAvg,
         };

@@ -1,12 +1,142 @@
-import { useRef } from 'react';
-import { Menu } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
-import HeatingSystemOverview from '../components/heating/HeatingSystemOverview';
+import { useEffect } from 'react';
+import { BedDouble, CalendarClock, CalendarDays, ChevronDown, ChevronRight, Droplet, Flame, Minus, Plus, Sofa, Thermometer } from 'lucide-react';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
+import { IconBadge, SectionCard } from '../components/ui/surface';
+import { formatHour, formatScheduleChangeDay, getNextScheduleChange } from '../lib/scheduleUtils';
+
+const MIN_TEMP = 5;
+const MAX_TEMP = 35;
+const DIAL_SIZE = 280;
+const DIAL_START_ANGLE = 135;
+const DIAL_SWEEP = 270;
+
+function clampTemp(value) {
+  return Math.max(MIN_TEMP, Math.min(MAX_TEMP, Math.round(value * 2) / 2));
+}
+
+function pickZoneIcon(zone) {
+  const name = String(zone && zone.name ? zone.name : '').toLowerCase();
+  if (name.includes('upstairs') || name.includes('up stair') || name.includes('first floor') || name.includes('bed')) return BedDouble;
+  if (name.includes('downstairs') || name.includes('down stair') || name.includes('ground floor') || name.includes('living')) return Sofa;
+  return Thermometer;
+}
+
+function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, heatingOn, dialPointerIdRef, formatTemperature }) {
+  const center = DIAL_SIZE / 2;
+  const radius = DIAL_SIZE * 0.4;
+  const trackStroke = 14;
+  const ringTouchTolerance = 22;
+  const ratio = Math.min(1, Math.max(0, (targetDraft - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)));
+  const dialAngle = DIAL_START_ANGLE + ratio * DIAL_SWEEP;
+  const toPoint = (angleDeg) => {
+    const angle = (angleDeg * Math.PI) / 180;
+    return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
+  };
+  const start = toPoint(DIAL_START_ANGLE);
+  const end = toPoint(DIAL_START_ANGLE + DIAL_SWEEP);
+  const knob = toPoint(dialAngle);
+  const largeArc = dialAngle - DIAL_START_ANGLE > 180 ? 1 : 0;
+  const basePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 1 1 ${end.x} ${end.y}`;
+  const activePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${knob.x} ${knob.y}`;
+
+  // The SVG is scaled with CSS on narrow screens, so convert pointer positions back into viewBox units.
+  const resolvePoint = (event, element) => {
+    const rect = element.getBoundingClientRect();
+    const scale = rect.width > 0 ? DIAL_SIZE / rect.width : 1;
+    const dx = (event.clientX - rect.left) * scale - center;
+    const dy = (event.clientY - rect.top) * scale - center;
+    return {
+      distanceFromCenter: Math.sqrt(dx * dx + dy * dy),
+      angleDeg: ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360,
+    };
+  };
+
+  const updateDialFromPointer = (event, element) => {
+    const { angleDeg } = resolvePoint(event, element);
+    const startA = ((DIAL_START_ANGLE % 360) + 360) % 360;
+    const clockwiseDelta = (angleDeg - startA + 360) % 360;
+    const clampedDelta = Math.min(DIAL_SWEEP, Math.max(0, clockwiseDelta));
+    setTargetDraft(clampTemp(MIN_TEMP + (clampedDelta / DIAL_SWEEP) * (MAX_TEMP - MIN_TEMP)));
+  };
+
+  const stepTarget = (delta) => setTargetDraft((prev) => clampTemp(prev + delta));
+  const stepButtonClass =
+    'grid h-14 w-14 place-items-center rounded-full bg-white text-orange-500 shadow-[0_8px_24px_rgba(249,115,22,0.18)] transition active:scale-95 dark:bg-slate-800';
+
+  return (
+    <div className="relative mx-auto flex w-full max-w-sm items-center justify-center">
+      <button type="button" className={`${stepButtonClass} absolute left-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(-0.5)} aria-label="Decrease target temperature">
+        <Minus className="h-6 w-6" strokeWidth={2.5} />
+      </button>
+
+      <div className="relative aspect-square w-[min(280px,68vw)] select-none" data-no-pull-refresh>
+        <svg
+          viewBox={`0 0 ${DIAL_SIZE} ${DIAL_SIZE}`}
+          className="absolute inset-0 h-full w-full"
+          style={{ touchAction: 'none' }}
+          onPointerDown={(event) => {
+            const element = event.currentTarget;
+            const { distanceFromCenter } = resolvePoint(event, element);
+            if (Math.abs(distanceFromCenter - radius) > trackStroke + ringTouchTolerance) return;
+            dialPointerIdRef.current = event.pointerId;
+            updateDialFromPointer(event, element);
+            element.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (dialPointerIdRef.current !== event.pointerId) return;
+            updateDialFromPointer(event, event.currentTarget);
+          }}
+          onPointerUp={(event) => {
+            if (dialPointerIdRef.current !== event.pointerId) return;
+            dialPointerIdRef.current = null;
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+          }}
+          onPointerCancel={(event) => {
+            if (dialPointerIdRef.current !== event.pointerId) return;
+            dialPointerIdRef.current = null;
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+          }}
+        >
+          <defs>
+            <linearGradient id="homeDialGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#FB923C" />
+              <stop offset="100%" stopColor="#EA580C" />
+            </linearGradient>
+            <radialGradient id="homeDialGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="60%" stopColor="#FFEDD5" stopOpacity="0.55" />
+              <stop offset="100%" stopColor="#FFEDD5" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <circle cx={center} cy={center} r={radius + 26} fill="url(#homeDialGlow)" className="dark:opacity-10" />
+          <path d={basePath} fill="none" className="stroke-slate-200 dark:stroke-slate-700" strokeWidth={trackStroke} strokeLinecap="round" />
+          <path d={activePath} fill="none" stroke="url(#homeDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
+          <circle cx={knob.x} cy={knob.y} r={13} fill="#ffffff" stroke="#F97316" strokeWidth="5" />
+        </svg>
+
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="grid place-items-center text-center">
+            <span className="text-sm font-medium text-muted">{zoneName}</span>
+            <span className="mt-1 text-6xl font-bold tracking-tight text-foreground">{targetDraft.toFixed(1)}°</span>
+            <span className={`mt-2 flex items-center gap-1.5 text-base font-semibold ${heatingOn ? 'text-orange-500' : 'text-muted'}`}>
+              {heatingOn ? <Flame className="h-4 w-4" fill="currentColor" /> : null}
+              {heatingOn ? 'Heating On' : 'Idle'}
+            </span>
+            <span className="mt-0.5 text-sm text-muted">Currently {formatTemperature(currentTemp)}</span>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" className={`${stepButtonClass} absolute right-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(0.5)} aria-label="Increase target temperature">
+        <Plus className="h-6 w-6" strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+}
 
 export default function HomeScreen({
   selectedZone,
+  systemName,
+  scheduleWeekByZone,
   zoneState,
   stateByDeviceId,
   targetDraft,
@@ -20,8 +150,6 @@ export default function HomeScreen({
   menuOpen,
   setMenuOpen,
   toggleTheme,
-  designMode,
-  toggleDesignMode,
   debugLayoutEnabled,
   toggleDebugLayout,
   theme,
@@ -44,244 +172,33 @@ export default function HomeScreen({
   writeHotWater,
   onOpenZoneSchedule,
 }) {
-  const detailSwipeStartRef = useRef(null);
-  const detailSwipeTrackingRef = useRef(false);
+  const dialZone = selectedZone || zones[0] || null;
+  const dialState = dialZone ? zoneState(stateByDeviceId, dialZone.id) : {};
+  const dialTarget = typeof dialState.targetTemp === 'number' ? dialState.targetTemp : null;
 
-  if (selectedZone) {
-    const zone = selectedZone;
-    const state = zoneState(stateByDeviceId, zone.id);
-    const current = typeof state.currentTemp === 'number' ? `${state.currentTemp.toFixed(1)}°` : '--.-°';
-    const heating = state.heatingOn;
-    const hasChange = typeof state.targetTemp === 'number' ? Math.abs(targetDraft - state.targetTemp) >= 0.01 : true;
-    const minTemp = 5;
-    const maxTemp = 35;
-    const dialSize = 320;
-    const center = dialSize / 2;
-    const radius = dialSize * 0.36;
-    const knobRadius = 12;
-    const trackStroke = 12;
-    const ringTouchTolerance = 22;
-    const startAngle = 135;
-    const sweepAngle = 270;
-    const ratio = Math.min(1, Math.max(0, (targetDraft - minTemp) / (maxTemp - minTemp)));
-    const dialAngle = startAngle + ratio * sweepAngle;
-    const toPoint = (angleDeg) => {
-      const angle = (angleDeg * Math.PI) / 180;
-      return {
-        x: center + radius * Math.cos(angle),
-        y: center + radius * Math.sin(angle),
-      };
-    };
-    const start = toPoint(startAngle);
-    const end = toPoint(startAngle + sweepAngle);
-    const knob = toPoint(dialAngle);
-    const largeArc = dialAngle - startAngle > 180 ? 1 : 0;
-    const basePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 1 1 ${end.x} ${end.y}`;
-    const activePath = `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${knob.x} ${knob.y}`;
-    const stepTarget = (delta) => {
-      setTargetDraft((prev) => {
-        const next = Math.round((prev + delta) * 2) / 2;
-        return Math.max(minTemp, Math.min(maxTemp, next));
-      });
-    };
-    const onDetailTouchStart = (event) => {
-      const touch = event.touches[0];
-      if (!touch) return;
-      detailSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
-      detailSwipeTrackingRef.current = touch.clientX <= 24;
-    };
+  // Keep the dial in step with the zone's real target whenever the zone changes or fresh state arrives.
+  useEffect(() => {
+    if (dialTarget !== null) setTargetDraft(dialTarget);
+  }, [dialZone?.id, dialTarget, setTargetDraft]);
 
-    const onDetailTouchMove = (event) => {
-      if (!detailSwipeTrackingRef.current || !detailSwipeStartRef.current) return;
-      const touch = event.touches[0];
-      if (!touch) return;
-      const dx = touch.clientX - detailSwipeStartRef.current.x;
-      const dy = touch.clientY - detailSwipeStartRef.current.y;
-      const isBackSwipe = dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.2;
-      if (isBackSwipe) {
-        detailSwipeTrackingRef.current = false;
-        detailSwipeStartRef.current = null;
-        setSelectedZoneId(null);
-      }
-    };
-
-    const onDetailTouchEnd = () => {
-      detailSwipeTrackingRef.current = false;
-      detailSwipeStartRef.current = null;
-    };
-
-    const resolvePoint = (event, element) => {
-      const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const dx = x - center;
-      const dy = y - center;
-      const distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
-      const angleDeg = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
-      return { distanceFromCenter, angleDeg };
-    };
-
-    const shouldStartDialDrag = (event, element) => {
-      const { distanceFromCenter } = resolvePoint(event, element);
-      return Math.abs(distanceFromCenter - radius) <= trackStroke + ringTouchTolerance;
-    };
-
-    const updateDialFromPointer = (event, element) => {
-      const { angleDeg } = resolvePoint(event, element);
-      const startA = ((startAngle % 360) + 360) % 360;
-      const clockwiseDelta = (angleDeg - startA + 360) % 360;
-      const clampedDelta = Math.min(sweepAngle, Math.max(0, clockwiseDelta));
-      const ratioV = clampedDelta / sweepAngle;
-      const next = minTemp + ratioV * (maxTemp - minTemp);
-      const snapped = Math.round(next * 2) / 2;
-      setTargetDraft(Math.max(minTemp, Math.min(maxTemp, snapped)));
-    };
-
-    return (
-      <main className={`${designMode === 'modern' ? 'modern-detail ' : ''}mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8`}>
-        <div
-          className="min-h-0 flex-1 overflow-y-auto pb-40"
-          onTouchStart={onDetailTouchStart}
-          onTouchMove={onDetailTouchMove}
-          onTouchEnd={onDetailTouchEnd}
-          onTouchCancel={onDetailTouchEnd}
-        >
-          <div className="mb-3">
-            <div className="mb-2 flex items-center gap-2">
-              <Button size="icon" variant="outline" onClick={() => setSelectedZoneId(null)} aria-label="Go back">‹</Button>
-              <h2 className="text-3xl font-bold tracking-tight text-foreground">{zone.name}</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Current</div>
-                <div className="text-4xl font-bold tracking-tight text-foreground">{current}</div>
-              </div>
-              <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Target</div>
-                <div className="text-4xl font-bold tracking-tight text-foreground">{formatTemperature(state.targetTemp)}</div>
-              </div>
-            </div>
-          </div>
-
-          <Card className="grid gap-4">
-            <div className="flex flex-col items-center justify-center gap-3 py-2">
-              <div className="relative grid place-items-center select-none" style={{ width: dialSize, height: dialSize }}>
-                <svg
-                  width={dialSize}
-                  height={dialSize}
-                  style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
-                  onPointerDown={(event) => {
-                    const element = event.currentTarget;
-                    if (!shouldStartDialDrag(event, element)) return;
-                    dialPointerIdRef.current = event.pointerId;
-                    updateDialFromPointer(event, element);
-                    element.setPointerCapture?.(event.pointerId);
-                  }}
-                  onPointerMove={(event) => {
-                    if (dialPointerIdRef.current !== event.pointerId) return;
-                    updateDialFromPointer(event, event.currentTarget);
-                  }}
-                  onPointerUp={(event) => {
-                    if (dialPointerIdRef.current !== event.pointerId) return;
-                    dialPointerIdRef.current = null;
-                    event.currentTarget.releasePointerCapture?.(event.pointerId);
-                  }}
-                  onPointerCancel={(event) => {
-                    if (dialPointerIdRef.current !== event.pointerId) return;
-                    dialPointerIdRef.current = null;
-                    event.currentTarget.releasePointerCapture?.(event.pointerId);
-                  }}
-                >
-                  <defs>
-                    <linearGradient id="tempDialGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#F6D365" />
-                      <stop offset="55%" stopColor="#F39C12" />
-                      <stop offset="100%" stopColor="#E74C3C" />
-                    </linearGradient>
-                  </defs>
-                  <path d={basePath} fill="none" stroke="#e6ebf1" strokeWidth={trackStroke} strokeLinecap="round" />
-                  <path d={activePath} fill="none" stroke="url(#tempDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
-                  <circle cx={knob.x} cy={knob.y} r={knobRadius} fill="#ffffff" stroke="#635bff" strokeWidth="3" />
-                </svg>
-                <div className="pointer-events-none absolute inset-0 grid place-items-center">
-                  <div className="grid place-items-center gap-3 text-center">
-                    <button
-                      type="button"
-                      className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                      onClick={() => stepTarget(0.5)}
-                      aria-label="Increase target temperature"
-                    >
-                      +
-                    </button>
-                    <div className="text-5xl font-bold tracking-tight text-foreground">{targetDraft.toFixed(1)}°</div>
-                    <button
-                      type="button"
-                      className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-white text-2xl font-semibold leading-none text-foreground"
-                      onClick={() => stepTarget(-0.5)}
-                      aria-label="Decrease target temperature"
-                    >
-                      −
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-center">
-              <div className="flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-semibold text-foreground dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
-                <span className={`h-2.5 w-2.5 rounded-full ${heating ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                {heating ? 'Heating' : 'Idle'}
-              </div>
-            </div>
-          </Card>
-
-          <div className="mt-4">
-            <button
-              type="button"
-              onClick={() => writeTarget(zone.id, targetDraft)}
-              disabled={!hasChange}
-              className="h-12 w-full rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {status.toLowerCase().includes('setting') ? 'Setting...' : 'Set temperature'}
-            </button>
-            <Button
-              variant="outline"
-              className="mt-2 h-11 w-full"
-              onClick={() => {
-                if (typeof onOpenZoneSchedule === 'function') {
-                  onOpenZoneSchedule(zone.id);
-                }
-              }}
-            >
-              View schedule
-            </Button>
-          </div>
-          <p className="mt-3 text-sm text-muted">{status}</p>
-        </div>
-
-        {renderBottomNav()}
-      </main>
-    );
-  }
+  const hasChange = dialTarget !== null && Math.abs(targetDraft - dialTarget) >= 0.01;
+  const isSetting = status.toLowerCase().includes('setting');
+  const anyHeating = zones.some((zone) => Boolean(zoneState(stateByDeviceId, zone.id).heatingOn));
+  const hotWaterOn = hotWater ? Boolean(zoneState(stateByDeviceId, hotWater.id).hotWaterOn) : false;
+  const nextChange = dialZone ? getNextScheduleChange(scheduleWeekByZone[String(dialZone.id)]) : null;
+  const scheduleLoaded = dialZone ? Boolean(scheduleWeekByZone[String(dialZone.id)]) : false;
+  const zoneCountLabel = `${zones.length} ${zones.length === 1 ? 'zone' : 'zones'}`;
 
   return (
     <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
-      <header className="fixed inset-x-0 top-0 z-30">
-        <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
-          <div className="mb-1 flex items-center justify-between">
-            <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
-            <div className="flex items-center gap-2 text-sm text-muted">
-              <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
-              <span>{connection.label}</span>
-            </div>
-          </div>
-        </div>
-      </header>
-
       <div
         ref={contentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-40 pt-[calc(env(safe-area-inset-top)+4.75rem)]"
-        onTouchStart={onContentTouchStart}
+        className="-mx-4 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-40 pt-[calc(env(safe-area-inset-top)+1rem)] md:mx-0 md:px-0"
+        onTouchStart={(event) => {
+          // Dragging the dial ring shouldn't double as pull-to-refresh.
+          if (event.target.closest?.('[data-no-pull-refresh]')) return;
+          onContentTouchStart(event);
+        }}
         onTouchMove={onContentTouchMove}
         onTouchEnd={onContentTouchEnd}
         onTouchCancel={onContentTouchEnd}
@@ -290,13 +207,13 @@ export default function HomeScreen({
           <div className="flex justify-center" style={{ height: 36 }}>
             <div className="mt-1.5 h-6 w-6">
               <svg viewBox="0 0 24 24" className={isRefreshing ? 'h-6 w-6 animate-spin' : 'h-6 w-6'} aria-hidden="true">
-                <circle cx="12" cy="12" r={ringRadius} fill="none" stroke="#cbd5e1" strokeWidth="2" />
+                <circle cx="12" cy="12" r={ringRadius} fill="none" stroke="#fed7aa" strokeWidth="2" />
                 <circle
                   cx="12"
                   cy="12"
                   r={ringRadius}
                   fill="none"
-                  stroke="#475569"
+                  stroke="#f97316"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   transform="rotate(-90 12 12)"
@@ -309,97 +226,212 @@ export default function HomeScreen({
           </div>
         ) : null}
 
-        <div style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 140ms ease' : 'none' }}>
+        <div
+          className="mx-auto grid max-w-xl gap-3"
+          style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 140ms ease' : 'none' }}
+        >
+          <header className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <button
+                type="button"
+                className="flex max-w-full items-center gap-1 text-left text-3xl font-bold tracking-tight text-foreground"
+                onClick={() => setMenuOpen(true)}
+                aria-label="Open menu"
+              >
+                <span className="truncate">{systemName}</span>
+                <ChevronDown className="h-6 w-6 shrink-0" />
+              </button>
+              <p className="mt-0.5 text-sm text-muted">
+                {isDashboardLoading ? 'Loading…' : `${zoneCountLabel} · ${anyHeating ? 'Heating active' : 'Idle'}`}
+              </p>
+            </div>
+            <div className="mt-2 flex shrink-0 items-center gap-1.5 rounded-full bg-white/80 px-3 py-1.5 text-xs font-medium text-muted shadow-sm dark:bg-slate-800">
+              <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
+              <span>{connection.label}</span>
+            </div>
+          </header>
+
           {status ? (
-            <p className={`mb-3 text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
+            <p className={`text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
           ) : null}
 
           {isDashboardLoading ? (
-            <section className="mb-3 grid gap-3 md:grid-cols-2">
-              {[1, 2, 3].map((idx) => (
-                <Card key={`zone-loading-${idx}`} className="animate-pulse">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="h-6 w-36 rounded bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-10 w-20 rounded bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="h-7 w-24 rounded-full bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-5 w-20 rounded bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="mt-2 h-4 w-40 rounded bg-slate-200 dark:bg-slate-700" />
-                </Card>
-              ))}
-              <p className="col-span-full text-center text-sm text-muted">Loading zones…</p>
+            <section className="grid gap-3">
+              <div className="mx-auto my-4 aspect-square w-[min(280px,68vw)] animate-pulse rounded-full border-[14px] border-slate-200 dark:border-slate-700" />
+              <div className="grid grid-cols-3 gap-3">
+                {[1, 2, 3].map((idx) => (
+                  <div key={`zone-loading-${idx}`} className="h-28 animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
+                ))}
+              </div>
+              <p className="text-center text-sm text-muted">Loading zones…</p>
             </section>
           ) : (
             <>
-              <HeatingSystemOverview zones={zones} hotWater={hotWater} stateByDeviceId={stateByDeviceId} />
-              <section className="mb-3 grid gap-3 md:grid-cols-2">
+              {dialZone ? (
+                <section className="py-2">
+                  <TemperatureDial
+                    zoneName={dialZone.name}
+                    targetDraft={targetDraft}
+                    setTargetDraft={setTargetDraft}
+                    currentTemp={dialState.currentTemp}
+                    heatingOn={Boolean(dialState.heatingOn)}
+                    dialPointerIdRef={dialPointerIdRef}
+                    formatTemperature={formatTemperature}
+                  />
+                  {hasChange || isSetting ? (
+                  <div className="mt-2 flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTargetDraft(dialTarget)}
+                      disabled={isSetting}
+                      className="h-11 rounded-full px-5 text-sm font-semibold text-muted disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => writeTarget(dialZone.id, targetDraft)}
+                      disabled={!hasChange || isSetting}
+                      className="h-11 rounded-full bg-gradient-to-r from-orange-400 to-orange-600 px-6 text-sm font-bold text-white shadow-md shadow-orange-500/25 disabled:opacity-60"
+                    >
+                      {isSetting ? 'Setting…' : `Set to ${targetDraft.toFixed(1)}°`}
+                    </button>
+                  </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              <section className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
                 {zones.map((zone) => {
                   const state = zoneState(stateByDeviceId, zone.id);
                   const heatingOn = Boolean(state.heatingOn);
-                  const showLoading = !state || typeof state.currentTemp !== 'number' || typeof state.targetTemp !== 'number';
+                  const selected = dialZone && Number(dialZone.id) === Number(zone.id);
+                  const ZoneIcon = pickZoneIcon(zone);
                   return (
-                    <Card
+                    <button
                       key={zone.id}
-                      className="cursor-pointer"
-                      onClick={() => {
-                        setSelectedZoneId(zone.id);
-                        setTargetDraft(typeof state.targetTemp === 'number' ? state.targetTemp : 20);
-                      }}
+                      type="button"
+                      onClick={() => setSelectedZoneId(zone.id)}
+                      aria-pressed={selected}
+                      className={`min-w-[calc((100%-1.5rem)/3)] flex-1 shrink-0 snap-start rounded-2xl border p-3 text-left transition ${
+                        selected
+                          ? 'border-orange-400 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-500/10'
+                          : 'border-white/70 bg-white/90 shadow-[0_6px_20px_rgba(10,37,64,0.05)] dark:border-slate-700 dark:bg-slate-900'
+                      }`}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                        <div className="text-4xl font-bold tracking-tight text-foreground">
-                          {showLoading ? '--.-°' : formatTemperature(state.currentTemp)}
-                        </div>
+                      <div className="grid gap-2">
+                        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${selected ? 'bg-orange-100 text-orange-500 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                          <ZoneIcon className="h-4 w-4" />
+                        </span>
+                        <span className="block truncate text-sm font-medium text-foreground">{zone.name}</span>
                       </div>
-
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <div className="rounded-md bg-gradient-to-r from-[#6D5BFF] to-[#9B6BFF] px-3 py-1.5 text-xs font-bold text-white">
-                          {showLoading ? 'Target --.-°' : `Target ${formatTemperature(state.targetTemp)}`}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-sm text-muted">
-                          <span className={`h-2 w-2 rounded-full ${heatingOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                          <span>{showLoading ? 'Loading…' : heatingOn ? 'Heating' : 'Idle'}</span>
-                        </div>
+                      <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">{formatTemperature(state.currentTemp)}</div>
+                      <div className={`mt-1 flex items-center gap-1 text-sm font-medium ${heatingOn ? 'text-orange-500' : 'text-muted'}`}>
+                        {heatingOn ? <Flame className="h-3.5 w-3.5" fill="currentColor" /> : null}
+                        <span className="truncate">{heatingOn ? 'Heating' : `Set ${formatTemperature(state.targetTemp)}`}</span>
                       </div>
-
-                      {showLoading ? (
-                        <p className="mt-2 text-xs font-semibold text-muted">Fetching latest zone state…</p>
-                      ) : null}
-                    </Card>
+                    </button>
                   );
                 })}
-              </section>
-            </>
-          )}
 
-          {hotWater && (
-            <Card>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-lg font-semibold text-foreground">{hotWater.name || 'Hot Water'}</h3>
-                <div className="flex items-center gap-1.5 text-sm text-muted">
-                  <span className={`h-2 w-2 rounded-full ${zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                  <span>{zoneState(stateByDeviceId, hotWater.id).hotWaterOn ? 'On' : 'Off'}</span>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <Button
-                  onClick={() => writeHotWater(hotWater.id, 60)}
-                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
+                {hotWater ? (
+                  <div className="min-w-[calc((100%-1.5rem)/3)] flex-1 shrink-0 snap-start rounded-2xl border border-white/70 bg-white/90 p-3 shadow-[0_6px_20px_rgba(10,37,64,0.05)] dark:border-slate-700 dark:bg-slate-900">
+                    <div className="grid gap-2">
+                      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${hotWaterOn ? 'bg-orange-100 text-orange-500 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                        <Droplet className="h-4 w-4" />
+                      </span>
+                      <span className="block truncate text-sm font-medium text-foreground">{hotWater.name || 'Hot Water'}</span>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">{hotWaterOn ? 'On' : 'Off'}</div>
+                    <div className={`mt-1 text-sm font-medium ${hotWaterOn ? 'text-orange-500' : 'text-muted'}`}>
+                      {hotWaterOn ? 'Heating' : 'Idle'}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
+              {dialZone ? (
+                <SectionCard
+                  className="flex cursor-pointer items-center gap-3 py-3"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpenZoneSchedule(dialZone.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') onOpenZoneSchedule(dialZone.id);
+                  }}
                 >
-                  Boost 1h
-                </Button>
-                <Button
-                  onClick={() => writeHotWater(hotWater.id, 120)}
-                  className="bg-gradient-to-r from-[#FF8F1F] to-[#FF6A3D] text-white shadow-sm hover:brightness-110 hover:shadow-md"
-                >
-                  Boost 2h
-                </Button>
-                <Button variant="outline" onClick={() => writeHotWater(hotWater.id, 0)}>Off</Button>
-              </div>
-            </Card>
+                  <IconBadge icon={CalendarDays} tone="slate" />
+                  <span className="flex-1 text-base font-semibold text-foreground">{dialZone.name} schedule</span>
+                  <ChevronRight className="h-5 w-5 text-muted" />
+                </SectionCard>
+              ) : null}
+
+              {hotWater ? (
+                <SectionCard className="grid gap-3">
+                  <div className="flex items-center gap-3">
+                    <IconBadge icon={Droplet} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-semibold text-foreground">Hot Water Boost</h3>
+                      <p className="text-sm text-muted">{hotWaterOn ? 'Hot water is on' : 'Quickly heat your hot water'}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 [&>button]:flex-1">
+                    {hotWaterOn ? (
+                      <button
+                        type="button"
+                        onClick={() => writeHotWater(hotWater.id, 0)}
+                        className="h-10 rounded-full border border-slate-300 px-4 text-sm font-semibold text-foreground dark:border-slate-600"
+                      >
+                        Off
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => writeHotWater(hotWater.id, 60)}
+                      className="h-10 rounded-full border-2 border-orange-400 px-4 text-sm font-semibold text-orange-600 dark:text-orange-400"
+                    >
+                      1 hr
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => writeHotWater(hotWater.id, 120)}
+                      className="h-10 rounded-full bg-orange-50 px-4 text-sm font-semibold text-orange-600 dark:bg-orange-500/15 dark:text-orange-400"
+                    >
+                      2 hr
+                    </button>
+                  </div>
+                </SectionCard>
+              ) : null}
+
+              {dialZone && (nextChange || !scheduleLoaded) ? (
+                <SectionCard className="flex items-center gap-3">
+                  <IconBadge icon={CalendarClock} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-muted">Next scheduled change</p>
+                    {nextChange ? (
+                      <>
+                        <p className="text-xl font-bold tracking-tight text-foreground">
+                          {formatScheduleChangeDay(nextChange)} at {formatHour(nextChange.hour)}
+                        </p>
+                        <p className="truncate text-sm text-muted">
+                          {dialZone.name} → {formatTemperature(nextChange.temp)}
+                        </p>
+                      </>
+                    ) : (
+                      <div className="mt-1 h-6 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onOpenZoneSchedule(dialZone.id)}
+                    className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-600 dark:bg-orange-500/15 dark:text-orange-400"
+                  >
+                    View
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </SectionCard>
+              ) : null}
+            </>
           )}
         </div>
       </div>
@@ -410,8 +442,6 @@ export default function HomeScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
-        designMode={designMode}
-        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

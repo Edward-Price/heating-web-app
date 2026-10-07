@@ -4,7 +4,6 @@ import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Input } from './components/ui/input';
 import HomeScreen from './screens/HomeScreen';
-import ModernHomeScreen from './screens/ModernHomeScreen';
 import StatsScreen from './screens/StatsScreen';
 import ScheduleScreen from './screens/ScheduleScreen';
 import { zoneState, formatTemperature, mapConnectionStatus } from './lib/deviceUtils';
@@ -21,23 +20,13 @@ import {
 import {
   WEEK_DAYS,
   createEmptyWeekSchedule,
-  formatHour,
   isBinaryScheduleDevice,
-  formatScheduleValue,
-  getTempScaleColor,
 } from './lib/scheduleUtils';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STORAGE_KEY = 'heating-web-session-token';
 const THEME_STORAGE_KEY = 'heating-web-theme';
-const DESIGN_STORAGE_KEY = 'heating-web-design';
 const DEBUG_LAYOUT_STORAGE_KEY = 'heating-web-debug-layout';
-const SCHEDULE_COLORS = [
-  { bg: 'bg-sky-50', text: 'text-sky-700', bar: 'bg-sky-400', chip: 'bg-sky-500' },
-  { bg: 'bg-orange-50', text: 'text-orange-700', bar: 'bg-orange-400', chip: 'bg-orange-500' },
-  { bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-400', chip: 'bg-emerald-500' },
-  { bg: 'bg-violet-50', text: 'text-violet-700', bar: 'bg-violet-400', chip: 'bg-violet-500' },
-];
 const EMPTY_SCHEDULE_NOTICE = { kind: 'neutral', text: '', dismissAt: null, zoneId: null, dayIndex: null };
 
 export default function App() {
@@ -62,17 +51,16 @@ export default function App() {
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) || 'light');
-  const [designMode, setDesignMode] = useState(() => localStorage.getItem(DESIGN_STORAGE_KEY) || 'classic');
   const [activeTab, setActiveTab] = useState('home');
   const [scheduleZoneId, setScheduleZoneId] = useState(null);
   const [scheduleDayIndex, setScheduleDayIndex] = useState(null);
   const [scheduleByZone, setScheduleByZone] = useState({});
   const [savedScheduleByZone, setSavedScheduleByZone] = useState({});
+  const [homeScheduleByZone, setHomeScheduleByZone] = useState({});
   const [scheduleIdByZone, setScheduleIdByZone] = useState({});
   const [scheduleLoadingByZone, setScheduleLoadingByZone] = useState({});
   const [scheduleSavingByZone, setScheduleSavingByZone] = useState({});
   const [scheduleNotice, setScheduleNotice] = useState(EMPTY_SCHEDULE_NOTICE);
-  const [expandedScheduleDays, setExpandedScheduleDays] = useState({});
   const [statsConfigByZone, setStatsConfigByZone] = useState({});
   const [statsSeriesByZone, setStatsSeriesByZone] = useState({});
   const [statsLoadingByZone, setStatsLoadingByZone] = useState({});
@@ -86,6 +74,7 @@ export default function App() {
   const [layoutCopyStatus, setLayoutCopyStatus] = useState('');
   const isLoadingRef = useRef(false);
   const isSystemsLoadingRef = useRef(false);
+  const homeScheduleRequestedRef = useRef(new Set());
   const dialPointerIdRef = useRef(null);
   const scheduleScrollerRef = useRef(null);
   const contentRef = useRef(null);
@@ -107,6 +96,8 @@ export default function App() {
     setStateByDeviceId({});
     setScheduleByZone({});
     setSavedScheduleByZone({});
+    setHomeScheduleByZone({});
+    homeScheduleRequestedRef.current.clear();
     setScheduleIdByZone({});
     setScheduleLoadingByZone({});
     setScheduleSavingByZone({});
@@ -256,9 +247,6 @@ export default function App() {
     localStorage.setItem(DEBUG_LAYOUT_STORAGE_KEY, debugLayoutEnabled ? '1' : '0');
   }, [debugLayoutEnabled]);
 
-  useEffect(() => {
-    localStorage.setItem(DESIGN_STORAGE_KEY, designMode);
-  }, [designMode]);
 
   const collectLayoutSnapshot = useCallback(() => {
     if (!debugLayoutEnabled) return null;
@@ -428,6 +416,8 @@ export default function App() {
       setScheduleDayIndex(null);
       setScheduleByZone({});
       setSavedScheduleByZone({});
+      setHomeScheduleByZone({});
+      homeScheduleRequestedRef.current.clear();
       setScheduleIdByZone({});
       setActiveTab('home');
       await loadDashboard();
@@ -443,6 +433,8 @@ export default function App() {
     setSelectedZoneId(null);
     setDevices([]);
     setStateByDeviceId({});
+    setHomeScheduleByZone({});
+    homeScheduleRequestedRef.current.clear();
     setConnectionState('disconnected');
     setActiveTab('home');
     setStatus('Choose a heating system.');
@@ -475,15 +467,9 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   }
 
-  function toggleDesignMode() {
-    setDesignMode((prev) => (prev === 'modern' ? 'classic' : 'modern'));
-  }
 
   function onSelectTab(tab) {
     setActiveTab(tab);
-    if (tab !== 'home') {
-      setSelectedZoneId(null);
-    }
     if (tab === 'home') {
       setStatus('');
     }
@@ -497,7 +483,7 @@ export default function App() {
 
     setStatsLoadingByZone((prev) => ({ ...prev, [key]: true }));
     try {
-      const qs = new URLSearchParams({ range, anchor }).toString();
+      const qs = new URLSearchParams({ range, anchor, tzOffset: String(new Date().getTimezoneOffset()) }).toString();
       const res = await apiGet(`/stats/zone/${zoneId}?${qs}`);
       const points = Array.isArray(res.points) ? res.points : [];
       setStatsSeriesByZone((prev) => ({
@@ -529,6 +515,33 @@ export default function App() {
     }
   }, [activeTab, zones, statsSeriesByZone, statsConfigByZone]);
 
+  // Schedules are fetched read-only for the home screen's "next change" card, separately from the
+  // schedule editor's draft state so unsaved edits never leak onto the home screen.
+  function loadHomeSchedules(force = false) {
+    for (const zone of zones) {
+      const key = String(zone.id);
+      if (!force && homeScheduleRequestedRef.current.has(key)) continue;
+      homeScheduleRequestedRef.current.add(key);
+      apiGet(`/zones/${zone.id}/schedule`)
+        .then((res) => {
+          setHomeScheduleByZone((prev) => ({ ...prev, [key]: normalizeScheduleWeekPayload(res.week) }));
+        })
+        .catch(() => {
+          homeScheduleRequestedRef.current.delete(key);
+        });
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'home' || !selectedSystemId || !zones.length) return;
+    loadHomeSchedules();
+  }, [activeTab, selectedSystemId, zones]);
+
+  useEffect(() => {
+    if (activeTab !== 'schedule' || scheduleZoneId !== null || !scheduleDevices.length) return;
+    void openScheduleZone(scheduleDevices[0].id);
+  }, [activeTab, scheduleZoneId, scheduleDevices]);
+
   function setZoneStatsRange(zoneId, range) {
     const key = String(zoneId);
     const nextConfig = createStatsConfig(range);
@@ -551,10 +564,6 @@ export default function App() {
     return scheduleByZone[String(zoneId)] || createEmptyWeekSchedule();
   }
 
-  function getDayPeriods(zoneId, dayIndex) {
-    const week = getZoneSchedule(zoneId);
-    return Array.isArray(week[dayIndex]?.periods) ? week[dayIndex].periods : [];
-  }
 
   function cloneWeekSchedule(week) {
     const sourceWeek = Array.isArray(week) ? week : createEmptyWeekSchedule();
@@ -643,15 +652,6 @@ export default function App() {
     });
   }
 
-  function adjustScheduleTemp(zoneId, dayIndex, periodIndex, delta) {
-    updateDayPeriods(zoneId, dayIndex, (periods) =>
-      periods.map((period, idx) => {
-        if (idx !== periodIndex) return period;
-        const next = Math.max(5, Math.min(35, Math.round((period.temp + delta) * 2) / 2));
-        return { ...period, temp: next };
-      })
-    );
-  }
 
   function setSchedulePeriodValue(zoneId, dayIndex, periodIndex, nextValue) {
     updateDayPeriods(zoneId, dayIndex, (periods) =>
@@ -659,44 +659,19 @@ export default function App() {
     );
   }
 
-  function addSchedulePeriod(zoneId, dayIndex) {
+
+
+  // Splits whichever period contains `atHour` so a new change point starts there, inheriting its value.
+  function insertSchedulePeriod(zoneId, dayIndex, atHour) {
     updateDayPeriods(zoneId, dayIndex, (periods) => {
-      if (!Array.isArray(periods) || periods.length === 0) {
-        return [
-          { start: 0, end: 23, temp: 18, colorIndex: 0 },
-          { start: 23, end: 24, temp: 18, colorIndex: 1 },
-        ];
-      }
-      const sorted = [...periods]
-        .map((period, idx) => ({ period, idx }))
-        .sort((a, b) => a.period.start - b.period.start);
-      const last = sorted[sorted.length - 1];
-      if (!last) return periods;
-
-      const next = [...periods].map((period) => ({ ...period }));
-      const lastPeriod = next[last.idx];
-      if (!lastPeriod) return periods;
-
-      const defaultDuration = 1;
-      const minDuration = 0.5;
-
-      if (lastPeriod.end < 24) {
-        const newStart = lastPeriod.end;
-        const newEnd = Math.min(24, newStart + defaultDuration);
-        next.push({ start: newStart, end: newEnd, temp: lastPeriod.temp, colorIndex: 0 });
-        return next;
-      }
-
-      const carveStart = Math.max(lastPeriod.start + minDuration, 24 - defaultDuration);
-      if (carveStart >= lastPeriod.end) {
-        return periods;
-      }
-      next[last.idx] = { ...lastPeriod, end: carveStart };
-      next.push({ ...lastPeriod, start: carveStart, end: 24, colorIndex: 0 });
+      const idx = periods.findIndex((period) => period.start < atHour && atHour < period.end);
+      if (idx === -1) return periods;
+      const next = periods.map((period) => ({ ...period }));
+      const target = next[idx];
+      next.splice(idx, 1, { ...target, end: atHour }, { ...target, start: atHour, colorIndex: 0 });
       return next;
     });
   }
-
 
   function removeSchedulePeriod(zoneId, dayIndex, periodIndex) {
     updateDayPeriods(zoneId, dayIndex, (periods) => {
@@ -740,15 +715,6 @@ export default function App() {
     });
   }
 
-  function setSchedulePeriodEnd(zoneId, dayIndex, periodIndex, nextEnd) {
-    updateDayPeriods(zoneId, dayIndex, (periods) =>
-      periods.map((period, idx) => {
-        if (idx !== periodIndex) return period;
-        const end = Math.min(24, Math.max(period.start + 0.5, Number(nextEnd)));
-        return { ...period, end: Number.isFinite(end) ? end : period.end };
-      })
-    );
-  }
 
   function selectedScheduleZone() {
     if (!scheduleZoneId) return null;
@@ -784,7 +750,7 @@ export default function App() {
             start: Number.isFinite(start) ? start : 0,
             end: Number.isFinite(end) ? end : 24,
             temp: Number.isFinite(temp) ? temp : 18,
-            colorIndex: idx % SCHEDULE_COLORS.length,
+            colorIndex: idx,
           };
         })
         .filter((p) => p.end > p.start);
@@ -796,11 +762,23 @@ export default function App() {
     });
   }
 
+  function todayScheduleIndex() {
+    return (new Date().getDay() + 6) % 7;
+  }
+
+  function isZoneScheduleDirty(zoneId) {
+    const zoneKey = String(zoneId);
+    if (!scheduleByZone[zoneKey] || !savedScheduleByZone[zoneKey]) return false;
+    return !areScheduleWeeksEqual(scheduleByZone[zoneKey], savedScheduleByZone[zoneKey]);
+  }
+
   async function openScheduleZone(zoneId) {
     const zoneKey = String(zoneId);
     setScheduleZoneId(zoneId);
-    setScheduleDayIndex(null);
+    setScheduleDayIndex((prev) => (prev === null ? todayScheduleIndex() : prev));
     dismissScheduleNotice();
+    // Keep unsaved edits when hopping between zones instead of overwriting them with a refetch.
+    if (isZoneScheduleDirty(zoneId)) return;
     setScheduleLoadingByZone((prev) => ({ ...prev, [zoneKey]: true }));
     try {
       const res = await apiGet(`/zones/${zoneId}/schedule`);
@@ -817,7 +795,6 @@ export default function App() {
   }
 
   function openZoneScheduleFromHome(zoneId) {
-    setSelectedZoneId(null);
     setActiveTab('schedule');
     void openScheduleZone(zoneId);
   }
@@ -851,7 +828,7 @@ export default function App() {
       setScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
       setSavedScheduleByZone((prev) => ({ ...prev, [zoneKey]: normalizedWeek }));
       setScheduleIdByZone((prev) => ({ ...prev, [zoneKey]: Number(res.scheduleId) || prev[zoneKey] || null }));
-      showScheduleNotice(zoneId, dayIndex, 'saved', `${WEEK_DAYS[dayIndex] || 'Day'} schedule saved.`, 2200);
+      showScheduleNotice(zoneId, dayIndex, 'saved', 'Schedule saved.', 2200);
     } catch (err) {
       showScheduleNotice(zoneId, dayIndex, 'error', `Schedule save failed: ${String(err.message || err)}`);
     } finally {
@@ -896,18 +873,6 @@ export default function App() {
     return targetSet.size;
   }
 
-  function resetScheduleDay(zoneId, dayIndex) {
-    if (!Number.isFinite(Number(zoneId)) || !Number.isInteger(Number(dayIndex))) return;
-    const zoneKey = String(zoneId);
-    setScheduleByZone((prev) => {
-      const currentWeek = cloneWeekSchedule(prev[zoneKey] || createEmptyWeekSchedule());
-      const savedWeek = cloneWeekSchedule(savedScheduleByZone[zoneKey] || createEmptyWeekSchedule());
-      if (!currentWeek[dayIndex] || !savedWeek[dayIndex]) return prev;
-      currentWeek[dayIndex] = { ...savedWeek[dayIndex], periods: savedWeek[dayIndex].periods.map((period) => ({ ...period })) };
-      return { ...prev, [zoneKey]: currentWeek };
-    });
-    showScheduleNotice(zoneId, dayIndex, 'saved', `${WEEK_DAYS[dayIndex] || 'Day'} reset.`, 2200);
-  }
 
   function resetScheduleWeek(zoneId) {
     if (!Number.isFinite(Number(zoneId))) return;
@@ -923,14 +888,7 @@ export default function App() {
     }
   }
 
-  function isScheduleDayExpanded(zoneId, dayIndex) {
-    return Boolean(expandedScheduleDays[`${zoneId}:${dayIndex}`]);
-  }
 
-  function toggleScheduleDayExpanded(zoneId, dayIndex) {
-    const key = `${zoneId}:${dayIndex}`;
-    setExpandedScheduleDays((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
 
   function renderBottomNav() {
     const tabs = [
@@ -959,16 +917,16 @@ export default function App() {
                   <span
                     className={
                       selected
-                        ? 'grid h-14 w-14 place-items-center rounded-full border border-border bg-foreground text-white shadow-lg shadow-slate-900/20 dark:border-slate-600 dark:bg-slate-100 dark:text-slate-900'
+                        ? 'grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-white shadow-lg shadow-orange-500/30'
                         : 'grid h-14 w-14 place-items-center rounded-full border border-border bg-white text-slate-500 shadow-md shadow-slate-900/10 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'
                     }
                   >
                     <Icon className="h-6 w-6" />
                   </span>
                 ) : (
-                  <Icon className={selected ? 'h-5 w-5 text-foreground' : 'h-5 w-5 text-slate-400'} />
+                  <Icon className={selected ? 'h-5 w-5 text-orange-500' : 'h-5 w-5 text-slate-400'} />
                 )}
-                <span className={selected ? 'text-xs font-semibold text-foreground' : 'text-xs font-medium text-slate-400'}>
+                <span className={selected ? 'text-xs font-semibold text-orange-500' : 'text-xs font-medium text-slate-400'}>
                   {tab.label}
                 </span>
               </button>
@@ -984,10 +942,11 @@ export default function App() {
     setIsRefreshing(true);
     try {
       await loadDashboard();
+      loadHomeSchedules(true);
     } finally {
       setIsRefreshing(false);
     }
-  }, [isRefreshing, loadDashboard]);
+  }, [isRefreshing, loadDashboard, zones]);
 
   const runStatsPullRefresh = useCallback(async () => {
     if (isStatsRefreshing) return;
@@ -1236,6 +1195,13 @@ export default function App() {
   }
 
   const hotWater = devices.find((d) => d.type === 'hotWater');
+  const selectedSystem = systems.find((item) => String(item.gatewayId) === String(selectedSystemId)) || null;
+  const homeScheduleWeekByZone = Object.fromEntries(
+    zones.map((zone) => {
+      const key = String(zone.id);
+      return [key, savedScheduleByZone[key] || homeScheduleByZone[key] || null];
+    })
+  );
   const connection = mapConnectionStatus(connectionState);
   const isErrorStatus = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
   const isDashboardLoading = connectionState === 'loading' && zones.length === 0;
@@ -1246,35 +1212,17 @@ export default function App() {
   const scheduleZone = selectedScheduleZone();
   const scheduleIsBinary = isBinaryScheduleDevice(scheduleZone);
   const isScheduleZoneLoading = scheduleZoneId !== null && Boolean(scheduleLoadingByZone[String(scheduleZoneId)]);
-  const savedDayPeriods =
-    scheduleZoneId !== null && scheduleDayIndex !== null
-      ? (savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods) || []
-      : [];
   const currentWeek = scheduleZoneId !== null ? getZoneSchedule(scheduleZoneId) : [];
   const savedWeek = scheduleZoneId !== null ? (savedScheduleByZone[String(scheduleZoneId)] || createEmptyWeekSchedule()) : [];
-  const hasUnsavedScheduleChanges =
-    scheduleZoneId !== null && scheduleDayIndex !== null
-      ? !areScheduleWeeksEqual(currentWeek, savedWeek)
-      : false;
   const hasUnsavedWeekChanges =
     scheduleZoneId !== null
       ? !areScheduleWeeksEqual(currentWeek, savedWeek)
       : false;
-  const hasUnsavedCurrentDayChanges =
-    scheduleZoneId !== null && scheduleDayIndex !== null
-      ? !areSchedulePeriodsEqual(
-        getDayPeriods(scheduleZoneId, scheduleDayIndex),
-        savedScheduleByZone[String(scheduleZoneId)]?.[scheduleDayIndex]?.periods || []
-      )
-      : false;
-  const dayName = scheduleDayIndex === null ? '' : WEEK_DAYS[scheduleDayIndex] || 'Day';
-  const HomeComponent = designMode === 'modern' && !selectedZone ? ModernHomeScreen : HomeScreen;
 
   if (activeTab === 'stats') {
     return (
       <>
         <StatsScreen
-          modern={designMode === 'modern'}
           zones={zones}
           statsPullDistance={statsPullDistance}
           isStatsRefreshing={isStatsRefreshing}
@@ -1301,8 +1249,6 @@ export default function App() {
           formatStatsAxisLabel={formatStatsAxisLabel}
           formatStatsTimestamp={formatStatsTimestamp}
           toggleTheme={toggleTheme}
-          designMode={designMode}
-          toggleDesignMode={toggleDesignMode}
           debugLayoutEnabled={debugLayoutEnabled}
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
@@ -1318,51 +1264,32 @@ export default function App() {
     return (
       <>
         <ScheduleScreen
-          modern={designMode === 'modern'}
+          scheduleDevices={scheduleDevices}
           scheduleZone={scheduleZone}
+          scheduleZoneId={scheduleZoneId}
           scheduleIsBinary={scheduleIsBinary}
           isScheduleZoneLoading={isScheduleZoneLoading}
-          dayName={dayName}
-          scheduleZoneId={scheduleZoneId}
-          setScheduleZoneId={setScheduleZoneId}
+          openScheduleZone={openScheduleZone}
           scheduleDayIndex={scheduleDayIndex}
           setScheduleDayIndex={setScheduleDayIndex}
           scheduleScrollerRef={scheduleScrollerRef}
-          scheduleDevices={scheduleDevices}
-          openScheduleZone={openScheduleZone}
-          WEEK_DAYS={WEEK_DAYS}
           getZoneSchedule={getZoneSchedule}
-          isScheduleDayExpanded={isScheduleDayExpanded}
-          toggleScheduleDayExpanded={toggleScheduleDayExpanded}
-          formatScheduleValue={formatScheduleValue}
-          formatHour={formatHour}
-          getTempScaleColor={getTempScaleColor}
-          SCHEDULE_COLORS={SCHEDULE_COLORS}
           setSchedulePeriodValue={setSchedulePeriodValue}
-          adjustScheduleTemp={adjustScheduleTemp}
-          removeSchedulePeriod={removeSchedulePeriod}
-          addSchedulePeriod={addSchedulePeriod}
           setSchedulePeriodStart={setSchedulePeriodStart}
-          setSchedulePeriodEnd={setSchedulePeriodEnd}
-          saveScheduleDay={saveScheduleDay}
-          saveScheduleWeek={saveScheduleWeek}
+          removeSchedulePeriod={removeSchedulePeriod}
+          insertSchedulePeriod={insertSchedulePeriod}
           copyScheduleDayPattern={copyScheduleDayPattern}
-          resetScheduleDay={resetScheduleDay}
+          saveScheduleWeek={saveScheduleWeek}
           resetScheduleWeek={resetScheduleWeek}
           isScheduleSaving={scheduleZoneId !== null && Boolean(scheduleSavingByZone[String(scheduleZoneId)])}
-          hasUnsavedScheduleChanges={hasUnsavedScheduleChanges}
           hasUnsavedWeekChanges={hasUnsavedWeekChanges}
-          hasUnsavedCurrentDayChanges={hasUnsavedCurrentDayChanges}
+          isZoneScheduleDirty={isZoneScheduleDirty}
           scheduleNotice={scheduleNotice}
           dismissScheduleNotice={dismissScheduleNotice}
-          savedDayPeriods={savedDayPeriods}
-          getDayPeriods={getDayPeriods}
           renderBottomNav={renderBottomNav}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           toggleTheme={toggleTheme}
-          designMode={designMode}
-          toggleDesignMode={toggleDesignMode}
           debugLayoutEnabled={debugLayoutEnabled}
           toggleDebugLayout={toggleDebugLayout}
           theme={theme}
@@ -1376,8 +1303,10 @@ export default function App() {
 
   return (
     <>
-      <HomeComponent
+      <HomeScreen
         selectedZone={selectedZone}
+        systemName={selectedSystem?.name || 'Home'}
+        scheduleWeekByZone={homeScheduleWeekByZone}
         zoneState={zoneState}
         stateByDeviceId={stateByDeviceId}
         targetDraft={targetDraft}
@@ -1391,8 +1320,6 @@ export default function App() {
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
-        designMode={designMode}
-        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

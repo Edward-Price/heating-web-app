@@ -21,11 +21,17 @@ export function shiftAnchor(anchor, range, delta) {
   return formatDayAnchor(base);
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+// Anchors are the viewer's local calendar day/month, matching the tzOffset sent with stats requests.
 export function createStatsConfig(range = 'day') {
   const now = new Date();
+  const month = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
   return {
     range,
-    anchor: range === 'month' ? formatMonthAnchor(now) : formatDayAnchor(now),
+    anchor: range === 'month' ? month : `${month}-${pad2(now.getDate())}`,
   };
 }
 
@@ -47,13 +53,13 @@ export function getStatsDomainBounds(config, fallbackPoints = []) {
     const [yRaw, mRaw] = String(config.anchor).split('-').map((n) => Number(n));
     const year = Number.isFinite(yRaw) ? yRaw : new Date().getUTCFullYear();
     const month = Number.isFinite(mRaw) ? mRaw : new Date().getUTCMonth() + 1;
-    const startTs = Date.UTC(year, month - 1, 1, 0, 0, 0, 0);
-    const endTs = Date.UTC(year, month, 1, 0, 0, 0, 0) - 1;
+    const startTs = new Date(year, month - 1, 1).getTime();
+    const endTs = new Date(year, month, 1).getTime() - 1;
     return { startTs, endTs };
   }
 
-  const startTs = Date.parse(`${config.anchor}T00:00:00.000Z`);
-  const endTs = Date.parse(`${config.anchor}T23:59:59.999Z`);
+  const startTs = Date.parse(`${config.anchor}T00:00:00`);
+  const endTs = Date.parse(`${config.anchor}T23:59:59.999`);
   if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs > startTs) {
     return { startTs, endTs };
   }

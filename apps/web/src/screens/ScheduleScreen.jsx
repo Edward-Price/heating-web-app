@@ -1,43 +1,91 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Menu } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { Copy, Minus, Plus, Trash2, X } from 'lucide-react';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
+import ScreenHeader from '../components/layout/ScreenHeader';
+import { SectionCard, Segmented } from '../components/ui/surface';
+import { WEEK_DAYS, formatHour, formatScheduleValue, getScheduleValueColor } from '../lib/scheduleUtils';
+
+const STEP_HOURS = 10 / 60;
+const MIN_TEMP = 5;
+const MAX_TEMP = 35;
+const AXIS_HOURS = [0, 6, 12, 18, 24];
+const COPY_PRESETS = [
+  { label: 'Weekdays', days: [0, 1, 2, 3, 4] },
+  { label: 'Weekend', days: [5, 6] },
+  { label: 'All days', days: [0, 1, 2, 3, 4, 5, 6] },
+];
+
+function sortWithIndex(periods) {
+  return (Array.isArray(periods) ? periods : [])
+    .map((period, originalIndex) => ({ period, originalIndex }))
+    .sort((a, b) => a.period.start - b.period.start);
+}
+
+function parseTimeInput(value) {
+  const [h, m] = String(value || '').split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return Math.round((h * 60 + m) / 10) * 10 / 60;
+}
+
+function nowHour() {
+  const now = new Date();
+  return now.getHours() + now.getMinutes() / 60;
+}
+
+function DayBar({ periods, binaryMode, marker = null, className = 'h-7' }) {
+  return (
+    <div className={`relative w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800 ${className}`}>
+      {periods.map(({ period, originalIndex }) => (
+        <span
+          key={`${originalIndex}-${period.start}`}
+          className="absolute inset-y-0 border-r border-white/70 last:border-r-0 dark:border-slate-900/60"
+          style={{
+            left: `${(period.start / 24) * 100}%`,
+            width: `${((period.end - period.start) / 24) * 100}%`,
+            backgroundColor: getScheduleValueColor(period.temp, binaryMode) || undefined,
+          }}
+        />
+      ))}
+      {marker !== null ? (
+        <span className="absolute inset-y-0 w-0.5 bg-slate-900 dark:bg-white" style={{ left: `${(marker / 24) * 100}%` }} />
+      ) : null}
+    </div>
+  );
+}
+
+function TimeAxis() {
+  return (
+    <div className="flex justify-between text-[11px] font-medium text-slate-400 dark:text-slate-500">
+      {AXIS_HOURS.map((hour) => (
+        <span key={hour}>{String(hour).padStart(2, '0')}</span>
+      ))}
+    </div>
+  );
+}
 
 export default function ScheduleScreen({
-  modern = false,
+  scheduleDevices,
   scheduleZone,
+  scheduleZoneId,
   scheduleIsBinary,
   isScheduleZoneLoading,
-  dayName,
-  scheduleZoneId,
-  setScheduleZoneId,
+  openScheduleZone,
   scheduleDayIndex,
   setScheduleDayIndex,
   scheduleScrollerRef,
-  scheduleDevices,
-  openScheduleZone,
-  WEEK_DAYS,
   getZoneSchedule,
-  formatScheduleValue,
-  formatHour,
   setSchedulePeriodValue,
-  removeSchedulePeriod,
-  addSchedulePeriod,
   setSchedulePeriodStart,
-  saveScheduleDay,
-  saveScheduleWeek,
+  removeSchedulePeriod,
+  insertSchedulePeriod,
   copyScheduleDayPattern,
-  resetScheduleDay,
+  saveScheduleWeek,
   resetScheduleWeek,
   isScheduleSaving,
-  hasUnsavedScheduleChanges,
   hasUnsavedWeekChanges,
-  hasUnsavedCurrentDayChanges,
+  isZoneScheduleDirty,
   scheduleNotice,
   dismissScheduleNotice,
-  savedDayPeriods,
-  getDayPeriods,
   renderBottomNav,
   menuOpen,
   setMenuOpen,
@@ -48,519 +96,323 @@ export default function ScheduleScreen({
   onLogout,
   onChangeSystem,
 }) {
-  const TIME_STEPS = Array.from({ length: 145 }, (_v, idx) => idx / 6);
-  const TEMP_STEPS = Array.from({ length: 43 }, (_v, idx) => 5 + idx * 0.5);
-  const toTimeOptions = (minValue, maxValue) =>
-    TIME_STEPS.filter((value) => value >= minValue - 0.001 && value <= maxValue + 0.001);
-  const [newPeriodStart, setNewPeriodStart] = useState(null);
-  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
-  const [copyTargetPickerOpen, setCopyTargetPickerOpen] = useState(false);
-  const timeGuides = [0, 6, 12, 18, 24];
-  const getTrendIndicator = (currentTemp, previousTemp) => {
-    if (scheduleIsBinary) return '';
-    const current = Number(currentTemp);
-    const previous = Number(previousTemp);
-    if (!Number.isFinite(current) || !Number.isFinite(previous)) return '';
-    if (current > previous) return '↑';
-    if (current < previous) return '↓';
-    return '→';
-  };
-  const sortedDayPeriods = useMemo(() => {
-    if (scheduleZoneId === null || scheduleDayIndex === null) return [];
-    return getDayPeriods(scheduleZoneId, scheduleDayIndex)
-      .map((period, originalIndex) => ({ period, originalIndex }))
-      .sort((a, b) => a.period.start - b.period.start);
-  }, [getDayPeriods, scheduleDayIndex, scheduleZoneId]);
-  const sortedSavedDayPeriods = useMemo(
-    () => (Array.isArray(savedDayPeriods) ? savedDayPeriods.slice().sort((a, b) => a.start - b.start) : []),
-    [savedDayPeriods]
+  const [copySheetOpen, setCopySheetOpen] = useState(false);
+  const [copyTargets, setCopyTargets] = useState([]);
+  const [highlightStart, setHighlightStart] = useState(null);
+  const todayIndex = (new Date().getDay() + 6) % 7;
+  const dayIndex = Number.isInteger(scheduleDayIndex) ? scheduleDayIndex : todayIndex;
+  const dayName = WEEK_DAYS[dayIndex];
+
+  const week = scheduleZoneId !== null ? getZoneSchedule(scheduleZoneId) : [];
+  const sortedWeek = useMemo(() => week.map((day) => sortWithIndex(day.periods)), [week]);
+  const dayPeriods = sortedWeek[dayIndex] || [];
+
+  useEffect(() => {
+    setHighlightStart(null);
+    setCopySheetOpen(false);
+  }, [scheduleZoneId, dayIndex]);
+
+  const notice = scheduleNotice && Number(scheduleNotice.zoneId) === Number(scheduleZoneId) ? scheduleNotice : null;
+  const showSaveBar = hasUnsavedWeekChanges || isScheduleSaving || (notice && notice.text);
+
+  // New change points go in the middle of the longest block, which is nearly always where people want them.
+  const longest = dayPeriods.reduce(
+    (best, entry) => (!best || entry.period.end - entry.period.start > best.period.end - best.period.start ? entry : best),
+    null
   );
+  const splitAt = longest
+    ? Math.round(((longest.period.start + longest.period.end) / 2) * 2) / 2
+    : null;
+  const canAdd = longest && splitAt - longest.period.start >= STEP_HOURS && longest.period.end - splitAt >= STEP_HOURS;
 
-  useEffect(() => {
-    setNewPeriodStart(null);
-    setMoreActionsOpen(false);
-    setCopyTargetPickerOpen(false);
-  }, [scheduleZoneId, scheduleDayIndex]);
+  const addChange = () => {
+    if (!canAdd) return;
+    insertSchedulePeriod(scheduleZoneId, dayIndex, splitAt);
+    setHighlightStart(splitAt);
+  };
 
-  useEffect(() => {
-    if (newPeriodStart === null) return;
-    const exists = sortedDayPeriods.some(({ period }) => Math.abs(period.start - newPeriodStart) < 0.001);
-    if (!exists) {
-      setNewPeriodStart(null);
-    }
-  }, [newPeriodStart, sortedDayPeriods]);
+  const openCopySheet = () => {
+    setCopyTargets([]);
+    setCopySheetOpen(true);
+  };
 
-  const weekSchedule = useMemo(() => {
-    if (scheduleZoneId === null) return [];
-    return getZoneSchedule(scheduleZoneId);
-  }, [getZoneSchedule, scheduleZoneId]);
-  const bannerState = useMemo(() => {
-    const matchesCurrentContext =
-      scheduleZoneId !== null
-      && scheduleDayIndex !== null
-      && Number(scheduleNotice.zoneId) === Number(scheduleZoneId)
-      && Number(scheduleNotice.dayIndex) === Number(scheduleDayIndex);
-    const activeNotice = matchesCurrentContext ? scheduleNotice : { kind: 'neutral', text: '' };
-    if (activeNotice.kind === 'error' || activeNotice.kind === 'saving') {
-      return activeNotice;
-    }
-    if (activeNotice.kind === 'saved' || activeNotice.kind === 'copied') {
-      return activeNotice;
-    }
-    if (hasUnsavedScheduleChanges) {
-      return { kind: 'dirty', text: 'Unsaved changes' };
-    }
-    return { kind: 'neutral', text: 'All changes saved' };
-  }, [hasUnsavedScheduleChanges, scheduleDayIndex, scheduleNotice, scheduleZoneId]);
-  const bannerClassesByKind = {
-    neutral: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200',
-    dirty: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300',
-    saving: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300',
-    saved: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
-    copied: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300',
-    error: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300',
+  const toggleCopyTarget = (idx) => {
+    setCopyTargets((prev) => (prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx]));
   };
-  const canDismissBanner = ['saved', 'copied', 'error'].includes(bannerState.kind);
-  const addPeriodFromCurrentDay = () => {
-    const current = sortedDayPeriods;
-    const lastPeriod = current[current.length - 1]?.period || null;
-    const expectedStart = lastPeriod
-      ? (lastPeriod.end < 24 ? lastPeriod.end : Math.max(lastPeriod.start + 0.5, 23))
-      : 23;
-    setNewPeriodStart(Math.round(expectedStart * 2) / 2);
-    addSchedulePeriod(scheduleZoneId, scheduleDayIndex);
-  };
-  const getGuideLabelClass = (hour) => {
-    if (hour === 0) return 'absolute text-[10px] font-medium text-slate-400 dark:text-slate-500';
-    if (hour === 24) return 'absolute -translate-y-full text-[10px] font-medium text-slate-400 dark:text-slate-500';
-    return 'absolute -translate-y-1/2 text-[10px] font-medium text-slate-400 dark:text-slate-500';
-  };
+
+  const zoneOptions = scheduleDevices.map((device) => ({
+    value: device.id,
+    label: device.name,
+    badge: isZoneScheduleDirty(device.id),
+  }));
 
   return (
-    <main className={`${modern ? 'modern-schedule ' : ''}mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8`}>
-      <header className="fixed inset-x-0 top-0 z-30">
-        <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
-          <div className="mb-1 flex items-center justify-between">
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={() => {
-                if (scheduleDayIndex !== null) {
-                  setScheduleDayIndex(null);
-                } else if (scheduleZoneId !== null) {
-                  setScheduleZoneId(null);
-                } else {
-                  setMenuOpen(true);
-                }
-              }}
-            >
-              {scheduleZoneId !== null ? '‹' : <Menu className="h-5 w-5" />}
-            </Button>
-            <div className="text-sm font-medium text-slate-500 dark:text-slate-300">
-              {scheduleDayIndex !== null ? dayName : scheduleZone ? scheduleZone.name : 'Select a zone'}
-            </div>
-          </div>
-        </div>
-      </header>
-
+    <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
       <div
         ref={scheduleScrollerRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-40 pt-[calc(env(safe-area-inset-top)+4.75rem)]"
+        className={`-mx-4 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pt-[calc(env(safe-area-inset-top)+1rem)] md:mx-0 md:px-0 ${showSaveBar ? 'pb-60' : 'pb-40'}`}
       >
-        {scheduleZoneId === null ? (
-          <section className="grid gap-3">
-            {scheduleDevices.map((zone) => (
-              <Card
-                key={zone.id}
-                className="cursor-pointer"
-                onClick={() => {
-                  void openScheduleZone(zone.id);
-                }}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                    <p className="text-sm text-muted">Tap to edit weekly program</p>
-                  </div>
-                  <span className="text-2xl text-slate-400">›</span>
+        <div className="mx-auto grid max-w-xl gap-3">
+          <ScreenHeader
+            title="Schedule"
+            subtitle={scheduleZone ? `${scheduleZone.name} · weekly program` : 'Weekly program'}
+            onOpenMenu={() => setMenuOpen(true)}
+          />
+
+          {zoneOptions.length > 1 ? (
+            <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+              <Segmented options={zoneOptions} value={scheduleZoneId} onChange={(id) => openScheduleZone(Number(id))} />
+            </div>
+          ) : null}
+
+          {isScheduleZoneLoading || scheduleZoneId === null ? (
+            <SectionCard className="grid animate-pulse gap-3">
+              {WEEK_DAYS.map((day) => (
+                <div key={day} className="flex items-center gap-3">
+                  <div className="h-4 w-8 rounded bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-7 flex-1 rounded-full bg-slate-200 dark:bg-slate-700" />
                 </div>
-              </Card>
-            ))}
-          </section>
-        ) : scheduleDayIndex === null ? (
-          <section className="grid gap-3">
-            {isScheduleZoneLoading
-              ? WEEK_DAYS.map((day) => (
-                  <Card key={`schedule-loading-${day}`} className="animate-pulse border border-slate-200/90">
-                    <div className="flex items-center justify-between">
-                      <div className="h-7 w-36 rounded bg-slate-200 dark:bg-slate-700" />
-                      <div className="h-5 w-5 rounded bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                      <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                      <div className="h-3 rounded bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                  </Card>
-                ))
-              : (
-                <>
-                  <Card className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-foreground">Week overview</h3>
-                      <p className="text-xs text-muted">Tap a day to edit</p>
-                    </div>
-                    <div className="overflow-x-auto pb-1">
-                      <div className="grid min-w-[860px] grid-cols-[42px_repeat(7,minmax(110px,1fr))] gap-2">
-                        <div className="grid gap-1">
-                          <div className="h-[34px]" />
-                          <div className="relative h-[360px]">
-                            {timeGuides.map((hour) => (
-                              <span
-                                key={`guide-${hour}`}
-                                className={getGuideLabelClass(hour)}
-                                style={{ top: `${(hour / 24) * 100}%` }}
-                              >
-                                {hour}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        {weekSchedule.map((day, dayIdx) => (
-                          <div key={day.day} className="grid gap-1">
-                            <button
-                              type="button"
-                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-semibold text-foreground hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
-                              onClick={() => setScheduleDayIndex(dayIdx)}
-                            >
-                              {day.day.slice(0, 3)}
-                            </button>
-                            <button
-                              type="button"
-                              className="relative h-[360px] overflow-hidden rounded-md border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-900"
-                              onClick={() => setScheduleDayIndex(dayIdx)}
-                            >
-                              {timeGuides.map((hour) => (
-                                <span
-                                  key={`${day.day}-line-${hour}`}
-                                  className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800"
-                                  style={{ top: `${(hour / 24) * 100}%` }}
-                                />
-                              ))}
-                              {day.periods
-                                .slice()
-                                .sort((a, b) => a.start - b.start)
-                                .map((period, idx, periods) => (
-                                  <span
-                                    key={`${day.day}-period-${idx}`}
-                                    className={`absolute inset-x-1 rounded px-1 py-0.5 text-[10px] font-semibold ${
-                                      idx % 2 === 0
-                                        ? 'bg-slate-100 text-foreground dark:bg-slate-800'
-                                        : 'bg-slate-200/70 text-foreground dark:bg-slate-700'
-                                    }`}
-                                    style={{
-                                      top: `calc(${(period.start / 24) * 100}% + 2px)`,
-                                      height: `calc(${((period.end - period.start) / 24) * 100}% - 4px)`,
-                                      minHeight: '18px',
-                                    }}
-                                  >
-                                    {scheduleIsBinary ? '' : `${getTrendIndicator(period.temp, periods[idx - 1]?.temp)} `}
-                                    {formatScheduleValue(period, scheduleIsBinary)}
-                                  </span>
-                                ))}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </Card>
-
-                  <div className="grid gap-2">
-                    <p className={`text-xs font-medium ${hasUnsavedWeekChanges ? 'text-amber-600 dark:text-amber-400' : 'text-muted'}`}>
-                      {hasUnsavedWeekChanges ? 'Unsaved week changes' : 'All week changes saved'}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          if (!window.confirm('Discard all unsaved changes for this week?')) return;
-                          resetScheduleWeek(scheduleZoneId);
-                        }}
-                        disabled={Boolean(isScheduleSaving) || !hasUnsavedWeekChanges}
-                      >
-                        Reset week
-                      </Button>
-                      <Button
-                        onClick={() => saveScheduleWeek(scheduleZoneId)}
-                        disabled={Boolean(isScheduleSaving) || !hasUnsavedWeekChanges}
-                      >
-                        {isScheduleSaving ? 'Saving...' : 'Save week'}
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              )}
-          </section>
-        ) : (
-          <section className="grid gap-3 pb-2">
-            <Card className="py-3">
-              <div className="mb-2 flex items-center justify-between text-sm text-muted">
-                <span>{dayName}</span>
-                <span>24h overview</span>
-              </div>
-
-              <div className="mt-1">
-                <div className="relative">
-                  <div className="relative h-10 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                    {sortedDayPeriods.map(({ period, originalIndex }, idx) => (
-                      <div
-                        key={`timeline-segment-${originalIndex}`}
-                        className={`absolute top-0 h-full border-r border-slate-200 last:border-r-0 dark:border-slate-700 ${
-                          idx % 2 === 0 ? 'bg-slate-100 dark:bg-slate-800' : 'bg-slate-200/80 dark:bg-slate-700/80'
-                        }`}
-                        style={{
-                          left: `${(period.start / 24) * 100}%`,
-                          width: `${((period.end - period.start) / 24) * 100}%`,
-                        }}
-                      />
-                    ))}
-                  </div>
+              ))}
+            </SectionCard>
+          ) : (
+            <>
+              <SectionCard className="grid gap-2 px-3">
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <h2 className="text-base font-semibold text-foreground">This week</h2>
+                  <span className="text-xs text-muted">Tap a day to edit</span>
                 </div>
-
-                <div className="mt-2 grid grid-cols-5 px-0.5 text-xs text-slate-400 dark:text-slate-500">
-                  <span className="text-left">0:00</span>
-                  <span className="text-center">6:00</span>
-                  <span className="text-center">12:00</span>
-                  <span className="text-center">18:00</span>
-                  <span className="text-right">24:00</span>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-900">
-              <div className="divide-y divide-slate-200 dark:divide-slate-700">
-                {sortedDayPeriods.map(({ period, originalIndex }, sortedIndex, sortedPeriods) => {
-                  const previousEnd = sortedIndex === 0 ? 0 : sortedPeriods[sortedIndex - 1].period.end;
-                  const startOptions = toTimeOptions(previousEnd, period.end - (10 / 60));
-                  const isNewPeriod = newPeriodStart !== null && Math.abs(period.start - newPeriodStart) < 0.001;
-                  const trendIndicator = getTrendIndicator(period.temp, sortedPeriods[sortedIndex - 1]?.period?.temp);
-                  const savedPeriod = sortedSavedDayPeriods[sortedIndex];
-                  const isEdited =
-                    !savedPeriod ||
-                    Math.abs(Number(savedPeriod.start) - Number(period.start)) > 0.001 ||
-                    Math.abs(Number(savedPeriod.temp) - Number(period.temp)) > 0.001;
+                {WEEK_DAYS.map((day, idx) => {
+                  const selected = idx === dayIndex;
+                  const isToday = idx === todayIndex;
                   return (
-                    <div
-                      key={`${period.start}-${period.end}-${originalIndex}`}
-                      className={`py-3 ${isNewPeriod ? 'bg-emerald-50/40 dark:bg-emerald-900/10' : ''} ${!isNewPeriod && isEdited ? 'bg-amber-50/40 dark:bg-amber-900/10' : ''}`}
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setScheduleDayIndex(idx)}
+                      aria-pressed={selected}
+                      className={`flex items-center gap-3 rounded-xl px-1 py-1 text-left transition ${selected ? 'bg-orange-50 ring-1 ring-orange-300 dark:bg-orange-500/10 dark:ring-orange-500/50' : ''}`}
                     >
-                      <div className="grid gap-3">
-                        {isNewPeriod ? (
-                          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                            New period
-                          </div>
-                        ) : null}
-                        {!isNewPeriod && isEdited ? (
-                          <div className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                            Edited
-                          </div>
-                        ) : null}
-                        <div className="flex flex-wrap items-end gap-2">
-                          <select
-                            className="h-10 min-w-[104px] rounded-md border border-border bg-white px-3 text-sm text-foreground disabled:opacity-70 dark:bg-slate-800"
-                            value={String(period.start)}
-                            onChange={(event) => setSchedulePeriodStart(scheduleZoneId, scheduleDayIndex, originalIndex, Number(event.target.value))}
-                          >
-                            {startOptions.map((value) => (
-                              <option key={`start-${originalIndex}-${value}`} value={value}>
-                                {formatHour(value)}
-                              </option>
-                            ))}
-                          </select>
+                      <span className={`w-9 shrink-0 text-sm font-semibold ${isToday ? 'text-orange-500' : 'text-foreground'}`}>
+                        {day.slice(0, 3)}
+                      </span>
+                      <DayBar periods={sortedWeek[idx] || []} binaryMode={scheduleIsBinary} marker={isToday ? nowHour() : null} />
+                    </button>
+                  );
+                })}
+                <div className="flex gap-3 px-1">
+                  <span className="w-9 shrink-0" />
+                  <div className="flex-1"><TimeAxis /></div>
+                </div>
+              </SectionCard>
+
+              <SectionCard className="grid gap-1">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-xl font-bold tracking-tight text-foreground">{dayName}</h2>
+                    <p className="text-sm text-muted">{dayIndex === todayIndex ? 'Today' : `${dayPeriods.length} ${dayPeriods.length === 1 ? 'setting' : 'settings'}`}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openCopySheet}
+                    className="flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-600 dark:bg-orange-500/15 dark:text-orange-400"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy to…
+                  </button>
+                </div>
+
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {dayPeriods.map(({ period, originalIndex }, sortedIndex) => {
+                    const isFirst = sortedIndex === 0;
+                    const isHighlighted = highlightStart !== null && Math.abs(period.start - highlightStart) < 0.001;
+                    const binaryOn = Number(period.temp) >= 0.5;
+                    return (
+                      <div
+                        key={`${originalIndex}-${period.start}`}
+                        className={`flex items-center gap-3 py-3 ${isHighlighted ? '-mx-2 rounded-xl bg-orange-50/70 px-2 dark:bg-orange-500/10' : ''}`}
+                      >
+                        <span className="h-10 w-1.5 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700" style={{ backgroundColor: getScheduleValueColor(period.temp, scheduleIsBinary) || undefined }} />
+                        <div className="min-w-0">
+                          {isFirst ? (
+                            <div className="flex h-9 items-center px-1 text-base font-semibold text-foreground">00:00</div>
+                          ) : (
+                            <input
+                              type="time"
+                              step={600}
+                              value={formatHour(period.start)}
+                              onChange={(event) => {
+                                const next = parseTimeInput(event.target.value);
+                                if (next !== null) setSchedulePeriodStart(scheduleZoneId, dayIndex, originalIndex, next);
+                              }}
+                              className="h-9 rounded-lg bg-slate-100 px-2 text-base font-semibold text-foreground outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:[color-scheme:dark]"
+                              aria-label={`Start time for setting ${sortedIndex + 1}`}
+                            />
+                          )}
+                          <div className="px-1 text-xs text-muted">until {formatHour(period.end)}</div>
+                        </div>
+
+                        <div className="ml-auto flex items-center gap-1.5">
                           {scheduleIsBinary ? (
-                            <select
-                              className="h-10 min-w-[110px] rounded-md border border-border bg-white px-3 text-sm text-foreground dark:bg-slate-800"
-                              value={Number(period.temp) >= 0.5 ? '1' : '0'}
-                              onChange={(event) => setSchedulePeriodValue(scheduleZoneId, scheduleDayIndex, originalIndex, Number(event.target.value))}
-                            >
-                              <option value="1">On</option>
-                              <option value="0">Off</option>
-                            </select>
+                            <Segmented
+                              options={[{ value: 1, label: 'On' }, { value: 0, label: 'Off' }]}
+                              value={binaryOn ? 1 : 0}
+                              onChange={(v) => setSchedulePeriodValue(scheduleZoneId, dayIndex, originalIndex, Number(v))}
+                            />
                           ) : (
                             <>
-                              <span className="min-w-[20px] text-center text-sm font-semibold text-slate-500 dark:text-slate-300">
-                                {trendIndicator}
-                              </span>
-                              <select
-                                className="h-10 min-w-[110px] rounded-md border border-border bg-white px-3 text-sm text-foreground dark:bg-slate-800"
-                                value={String(Number(period.temp))}
-                                onChange={(event) => setSchedulePeriodValue(scheduleZoneId, scheduleDayIndex, originalIndex, Number(event.target.value))}
+                              <button
+                                type="button"
+                                aria-label="Lower temperature"
+                                onClick={() => setSchedulePeriodValue(scheduleZoneId, dayIndex, originalIndex, Math.max(MIN_TEMP, Number(period.temp) - 0.5))}
+                                className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-600 active:scale-95 dark:bg-slate-800 dark:text-slate-300"
                               >
-                                {TEMP_STEPS.map((value) => (
-                                  <option key={`temp-${originalIndex}-${value}`} value={value}>
-                                    {value.toFixed(1)}°
-                                  </option>
-                                ))}
-                              </select>
+                                <Minus className="h-4 w-4" />
+                              </button>
+                              <span className="w-14 text-center text-lg font-bold tabular-nums text-foreground">
+                                {formatScheduleValue(period, false)}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label="Raise temperature"
+                                onClick={() => setSchedulePeriodValue(scheduleZoneId, dayIndex, originalIndex, Math.min(MAX_TEMP, Number(period.temp) + 0.5))}
+                                className="grid h-9 w-9 place-items-center rounded-full bg-orange-50 text-orange-600 active:scale-95 dark:bg-orange-500/15 dark:text-orange-400"
+                              >
+                                <Plus className="h-4 w-4" />
+                              </button>
                             </>
                           )}
                           <button
                             type="button"
-                            className="ml-auto grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-base font-bold text-slate-400 dark:border-slate-700 dark:bg-slate-800"
-                            onClick={() => removeSchedulePeriod(scheduleZoneId, scheduleDayIndex, originalIndex)}
-                            aria-label="Delete period"
+                            aria-label="Remove setting"
+                            disabled={isFirst}
+                            onClick={() => removeSchedulePeriod(scheduleZoneId, dayIndex, originalIndex)}
+                            className="ml-1 grid h-9 w-9 place-items-center rounded-full text-slate-400 hover:text-rose-500 disabled:invisible"
                           >
-                            ×
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
+                    );
+                  })}
+                </div>
 
-            <div className="grid gap-2">
-              <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${bannerClassesByKind[bannerState.kind]}`}>
-                <span className="flex-1">{bannerState.text}</span>
-                {canDismissBanner ? (
-                  <button
-                    type="button"
-                    className="rounded px-1 text-[11px] font-semibold opacity-80 hover:opacity-100"
-                    onClick={dismissScheduleNotice}
-                  >
-                    Dismiss
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </section>
-        )}
+                <button
+                  type="button"
+                  onClick={addChange}
+                  disabled={!canAdd}
+                  className="mt-1 flex h-11 items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-200 text-sm font-semibold text-muted transition hover:border-orange-300 hover:text-orange-600 disabled:opacity-50 dark:border-slate-700"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add a change
+                </button>
+              </SectionCard>
+            </>
+          )}
+        </div>
       </div>
 
-      {scheduleDayIndex !== null ? (
-        <>
-          <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40">
-            <div className="pointer-events-auto mx-auto max-w-5xl px-4 md:px-8">
-              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 rounded-xl border border-slate-200/80 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
-                <Button
-                  variant="outline"
-                  onClick={addPeriodFromCurrentDay}
-                  disabled={Boolean(isScheduleSaving)}
-                >
-                  + Add period
-                </Button>
-                <Button
-                  onClick={() => saveScheduleDay(scheduleZoneId, scheduleDayIndex)}
-                  disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
-                >
-                  {isScheduleSaving ? 'Saving...' : 'Save schedule'}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setCopyTargetPickerOpen(false);
-                    setMoreActionsOpen(true);
-                  }}
-                >
-                  More
-                </Button>
-              </div>
+      {showSaveBar ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.25rem)] z-40">
+          <div className="pointer-events-auto mx-auto max-w-xl px-4">
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/95 p-2 pl-4 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+              {notice && notice.text && !hasUnsavedWeekChanges ? (
+                <>
+                  <span className={`flex-1 text-sm font-medium ${notice.kind === 'error' ? 'text-rose-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {notice.text}
+                  </span>
+                  <button type="button" onClick={dismissScheduleNotice} aria-label="Dismiss" className="grid h-9 w-9 place-items-center rounded-full text-muted">
+                    <X className="h-4 w-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-medium text-foreground">
+                    {isScheduleSaving ? 'Saving…' : notice && notice.kind === 'error' ? <span className="text-rose-600">{notice.text}</span> : 'Unsaved changes'}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isScheduleSaving}
+                    onClick={() => {
+                      if (!window.confirm(`Discard unsaved changes to the ${scheduleZone ? scheduleZone.name : ''} schedule?`)) return;
+                      resetScheduleWeek(scheduleZoneId);
+                      dismissScheduleNotice();
+                    }}
+                    className="h-10 rounded-full px-4 text-sm font-semibold text-muted disabled:opacity-50"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isScheduleSaving || !hasUnsavedWeekChanges}
+                    onClick={() => saveScheduleWeek(scheduleZoneId)}
+                    className="h-10 rounded-full bg-gradient-to-r from-orange-400 to-orange-600 px-5 text-sm font-bold text-white shadow-md shadow-orange-500/25 disabled:opacity-60"
+                  >
+                    {isScheduleSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
+        </div>
+      ) : null}
 
-          {moreActionsOpen ? (
-            <div className="fixed inset-0 z-50">
-              <button
-                type="button"
-                aria-label="Close actions"
-                className="absolute inset-0 bg-slate-900/40"
-                onClick={() => {
-                  setMoreActionsOpen(false);
-                  setCopyTargetPickerOpen(false);
-                }}
-              />
-              <div className="absolute inset-x-0 bottom-0">
-                <div className="mx-auto max-w-5xl px-4 pb-[calc(env(safe-area-inset-bottom)+5rem)] md:px-8">
-                  <div className="rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-foreground">More actions</h3>
-                      <button
-                        type="button"
-                        className="rounded px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                        onClick={() => {
-                          setMoreActionsOpen(false);
-                          setCopyTargetPickerOpen(false);
-                        }}
-                      >
-                        Close
-                      </button>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => setCopyTargetPickerOpen((prev) => !prev)}
-                        disabled={Boolean(isScheduleSaving)}
-                      >
-                        Copy day to...
-                      </Button>
-
-                      {copyTargetPickerOpen ? (
-                        <div className="grid grid-cols-2 gap-2 rounded-md border border-slate-200 p-2 dark:border-slate-700">
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4]);
-                              setMoreActionsOpen(false);
-                              setCopyTargetPickerOpen(false);
-                            }}
-                          >
-                            Weekdays
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              copyScheduleDayPattern(scheduleZoneId, scheduleDayIndex, [0, 1, 2, 3, 4, 5, 6]);
-                              setMoreActionsOpen(false);
-                              setCopyTargetPickerOpen(false);
-                            }}
-                          >
-                            All days
-                          </Button>
-                        </div>
-                      ) : null}
-
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          resetScheduleDay(scheduleZoneId, scheduleDayIndex);
-                          setMoreActionsOpen(false);
-                          setCopyTargetPickerOpen(false);
-                        }}
-                        disabled={Boolean(isScheduleSaving) || !hasUnsavedCurrentDayChanges}
-                      >
-                        Reset day
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          if (!window.confirm('Discard all unsaved changes for this week?')) return;
-                          resetScheduleWeek(scheduleZoneId);
-                          setMoreActionsOpen(false);
-                          setCopyTargetPickerOpen(false);
-                        }}
-                        disabled={Boolean(isScheduleSaving) || !hasUnsavedScheduleChanges}
-                      >
-                        Reset week
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      {copySheetOpen ? (
+        <div className="fixed inset-0 z-[60]">
+          <button type="button" aria-label="Close" className="absolute inset-0 bg-slate-900/40" onClick={() => setCopySheetOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 mx-auto max-w-xl rounded-t-3xl bg-white p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] shadow-2xl dark:bg-slate-900">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-foreground">Copy {dayName} to…</h3>
+              <button type="button" onClick={() => setCopySheetOpen(false)} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-muted dark:bg-slate-800">
+                <X className="h-4 w-4" />
+              </button>
             </div>
-          ) : null}
-        </>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {COPY_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => setCopyTargets(preset.days.filter((d) => d !== dayIndex))}
+                  className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-semibold text-foreground dark:border-slate-700"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="mb-5 grid grid-cols-7 gap-1.5">
+              {WEEK_DAYS.map((day, idx) => {
+                const isSource = idx === dayIndex;
+                const checked = copyTargets.includes(idx);
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    disabled={isSource}
+                    onClick={() => toggleCopyTarget(idx)}
+                    aria-pressed={checked}
+                    className={`h-12 rounded-xl text-sm font-semibold transition disabled:opacity-40 ${
+                      checked
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-slate-100 text-foreground dark:bg-slate-800'
+                    }`}
+                  >
+                    {day.slice(0, 2)}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              disabled={copyTargets.length === 0}
+              onClick={() => {
+                copyScheduleDayPattern(scheduleZoneId, dayIndex, copyTargets);
+                setCopySheetOpen(false);
+              }}
+              className="h-12 w-full rounded-full bg-gradient-to-r from-orange-400 to-orange-600 text-base font-bold text-white disabled:opacity-50"
+            >
+              {copyTargets.length ? `Copy to ${copyTargets.length} ${copyTargets.length === 1 ? 'day' : 'days'}` : 'Choose days'}
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {renderBottomNav()}
@@ -569,8 +421,6 @@ export default function ScheduleScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
-        designMode={designMode}
-        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}

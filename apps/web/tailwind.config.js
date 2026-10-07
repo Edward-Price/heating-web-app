@@ -9,7 +9,7 @@ export default {
         foreground: '#0a2540',
         card: '#ffffff',
         border: '#e6ebf1',
-        accent: '#635bff',
+        accent: '#f97316',
         muted: '#425466'
       }
     }

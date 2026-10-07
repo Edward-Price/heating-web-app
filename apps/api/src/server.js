@@ -935,7 +935,8 @@ const server = http.createServer(async (req, res) => {
       const zoneId = Number(statsZoneMatch[1]);
       const range = searchParams.get('range') === 'month' ? 'month' : 'day';
       const anchor = searchParams.get('anchor') || undefined;
-      const series = queryZoneSeries({ zoneId, range, anchor });
+      const tzOffsetMinutes = Number(searchParams.get('tzOffset') || 0);
+      const series = queryZoneSeries({ zoneId, range, anchor, tzOffsetMinutes });
       sendJson(res, 200, {
         ok: true,
         ...series,

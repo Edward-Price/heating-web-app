@@ -1,10 +1,32 @@
-import { Menu } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
+import ScreenHeader from '../components/layout/ScreenHeader';
+import { SectionCard, Segmented } from '../components/ui/surface';
+
+function formatPeriodLabel(config, createStatsConfig) {
+  if (config.range === 'month') {
+    const [y, m] = String(config.anchor).split('-').map(Number);
+    return new Date(y, (m || 1) - 1, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+  }
+  const today = createStatsConfig('day').anchor;
+  if (config.anchor === today) return 'Today';
+  const date = new Date(`${config.anchor}T12:00:00`);
+  const yesterday = new Date(`${today}T12:00:00`);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function StatTile({ label, value }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="text-lg font-bold tabular-nums text-foreground">{value}</div>
+    </div>
+  );
+}
 
 export default function StatsScreen({
-  modern = false,
   zones,
   statsPullDistance,
   isStatsRefreshing,
@@ -43,18 +65,11 @@ export default function StatsScreen({
   const statsRingDashOffset = statsRingCircumference * (1 - statsPullProgress);
 
   return (
-    <main className={`${modern ? 'modern-stats ' : ''}mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8`}>
-      <header className="fixed inset-x-0 top-0 z-30">
-        <div className="mx-auto max-w-5xl px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] md:px-8">
-          <div className="mb-1 flex items-center justify-between">
-            <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></Button>
-          </div>
-        </div>
-      </header>
+    <main className="mx-auto flex h-[100lvh] max-w-5xl flex-col overflow-hidden px-4 md:px-8">
 
       <div
         ref={statsContentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-40 pt-[calc(env(safe-area-inset-top)+4.75rem)]"
+        className="-mx-4 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-40 pt-[calc(env(safe-area-inset-top)+1rem)] md:mx-0 md:px-0"
         onTouchStart={onStatsTouchStart}
         onTouchMove={onStatsTouchMove}
         onTouchEnd={onStatsTouchEnd}
@@ -73,7 +88,7 @@ export default function StatsScreen({
                   cy="12"
                   r={statsRingRadius}
                   fill="none"
-                  stroke="#cbd5e1"
+                  stroke="#fed7aa"
                   strokeWidth="2"
                 />
                 <circle
@@ -81,7 +96,7 @@ export default function StatsScreen({
                   cy="12"
                   r={statsRingRadius}
                   fill="none"
-                  stroke="#475569"
+                  stroke="#f97316"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   transform="rotate(-90 12 12)"
@@ -95,9 +110,11 @@ export default function StatsScreen({
         ) : null}
 
         <section
-          className="grid gap-3 pb-2"
+          className="mx-auto grid max-w-xl gap-3 pb-2"
           style={{ transform: `translateY(${statsPullDistance}px)`, transition: statsPullDistance === 0 ? 'transform 140ms ease' : 'none' }}
         >
+          <ScreenHeader title="Stats" subtitle="Room temperature history" onOpenMenu={() => setMenuOpen(true)} />
+
           {zones.map((zone) => {
             const key = String(zone.id);
             const config = statsConfigByZone[key] || createStatsConfig('day');
@@ -180,7 +197,13 @@ export default function StatsScreen({
               domainEndTs
             );
             const currentAreaPath = buildSeriesAreaPath(currentCoords, graphAreaBaselineY);
-            const targetAreaPath = buildSeriesAreaPath(targetCoords, graphAreaBaselineY);
+            const currentValues = points.map((p) => p.currentTemp).filter((n) => Number.isFinite(n) && n >= 5 && n <= 35);
+            const avgCurrent = currentValues.length ? currentValues.reduce((sum, n) => sum + n, 0) / currentValues.length : null;
+            const minCurrent = currentValues.length ? Math.min(...currentValues) : null;
+            const maxCurrent = currentValues.length ? Math.max(...currentValues) : null;
+            const fmt = (n) => (Number.isFinite(n) ? `${n.toFixed(1)}°` : '--.-°');
+            const isLatestPeriod = config.anchor === createStatsConfig(config.range).anchor;
+            const gradientId = `stats-current-${key}`;
             const hoverIdxRaw = statsHoverByZone[key];
             const hoverIdx = Number.isInteger(hoverIdxRaw) ? hoverIdxRaw : null;
             const hoveredPoint = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < points.length ? points[hoverIdx] : null;
@@ -195,40 +218,44 @@ export default function StatsScreen({
               : null;
 
             return (
-              <Card key={zone.id} className="overflow-hidden">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-lg font-semibold text-foreground">{zone.name}</h3>
-                  <div className="flex items-center gap-2">
-                    <div className="inline-flex rounded-full bg-slate-100 p-1 dark:bg-slate-800">
-                      <button
-                        type="button"
-                        className={
-                          config.range === 'day'
-                            ? 'rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow dark:bg-slate-700 dark:text-slate-100'
-                            : 'rounded-full px-3 py-1 text-xs font-semibold text-slate-500 dark:text-slate-300'
-                        }
-                        onClick={() => setZoneStatsRange(zone.id, 'day')}
-                      >
-                        Day
-                      </button>
-                      <button
-                        type="button"
-                        className={
-                          config.range === 'month'
-                            ? 'rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow dark:bg-slate-700 dark:text-slate-100'
-                            : 'rounded-full px-3 py-1 text-xs font-semibold text-slate-500 dark:text-slate-300'
-                        }
-                        onClick={() => setZoneStatsRange(zone.id, 'month')}
-                      >
-                        Month
-                      </button>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, -1)}>‹</Button>
-                    <Button size="sm" variant="outline" onClick={() => shiftZoneStats(zone.id, 1)}>›</Button>
-                  </div>
+              <SectionCard key={zone.id} className="overflow-hidden">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="truncate text-lg font-semibold text-foreground">{zone.name}</h3>
+                  <Segmented
+                    options={[{ value: 'day', label: 'Day' }, { value: 'month', label: 'Month' }]}
+                    value={config.range}
+                    onChange={(range) => setZoneStatsRange(zone.id, range)}
+                  />
                 </div>
 
-                <div className="mt-3 rounded-xl bg-slate-50/85 p-2 dark:bg-slate-900/50">
+                <div className="mt-3 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => shiftZoneStats(zone.id, -1)}
+                    aria-label="Previous period"
+                    className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="text-sm font-semibold text-foreground">{formatPeriodLabel(config, createStatsConfig)}</span>
+                  <button
+                    type="button"
+                    onClick={() => shiftZoneStats(zone.id, 1)}
+                    disabled={isLatestPeriod}
+                    aria-label="Next period"
+                    className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-600 disabled:opacity-30 dark:bg-slate-800 dark:text-slate-300"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <StatTile label="Average" value={fmt(avgCurrent)} />
+                  <StatTile label="Lowest" value={fmt(minCurrent)} />
+                  <StatTile label="Highest" value={fmt(maxCurrent)} />
+                </div>
+
+                <div className="mt-3">
                   <div className="grid grid-cols-[auto,1fr] items-stretch gap-x-2">
                     <div className="flex h-full flex-col items-end justify-between py-1 text-[11px] text-slate-500 dark:text-slate-400">
                       <span>{`${axisTopLabel}°`}</span>
@@ -237,7 +264,7 @@ export default function StatsScreen({
                     </div>
                     <div>
                       <div
-                      className="w-full"
+                      className="relative w-full"
                       style={{ aspectRatio: `${graphW} / ${graphH}` }}
                       onMouseMove={(event) => {
                         setStatsHoverFromClientX(
@@ -283,16 +310,15 @@ export default function StatsScreen({
                         <line x1="12" y1={graphGridTopY} x2="708" y2={graphGridTopY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
                         <line x1="12" y1={graphGridMidY} x2="708" y2={graphGridMidY} stroke="rgba(148,163,184,0.2)" strokeWidth="1" />
                         <line x1="12" y1={graphGridBottomY} x2="708" y2={graphGridBottomY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" />
-                        {targetAreaPath ? <path d={targetAreaPath} fill="rgba(139,92,246,0.2)" stroke="none" /> : null}
-                        {currentAreaPath ? <path d={currentAreaPath} fill="rgba(6,182,212,0.2)" stroke="none" /> : null}
-                        {targetPath ? <path d={targetPath} fill="none" stroke="#8b5cf6" strokeWidth="3" /> : null}
-                        {currentPath ? <path d={currentPath} fill="none" stroke="#06b6d4" strokeWidth="3" /> : null}
-                        {targetCoords.map((pt, idx) => (
-                          <circle key={`target-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#8b5cf6" />
-                        ))}
-                        {currentCoords.map((pt, idx) => (
-                          <circle key={`current-dot-${idx}`} cx={pt.x} cy={pt.y} r="3.2" fill="#06b6d4" />
-                        ))}
+                        <defs>
+                          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#F97316" stopOpacity="0.28" />
+                            <stop offset="100%" stopColor="#F97316" stopOpacity="0" />
+                          </linearGradient>
+                        </defs>
+                        {currentAreaPath ? <path d={currentAreaPath} fill={`url(#${gradientId})`} stroke="none" /> : null}
+                        {targetPath ? <path d={targetPath} fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeDasharray="8 6" strokeLinejoin="round" /> : null}
+                        {currentPath ? <path d={currentPath} fill="none" stroke="#F97316" strokeWidth="3.5" strokeLinejoin="round" strokeLinecap="round" /> : null}
                         {hoverX !== null ? (
                           <line
                             x1={hoverX}
@@ -309,7 +335,7 @@ export default function StatsScreen({
                             cx={hoverX}
                             cy={2 + (1 - (hoveredPoint.targetTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
                             r="4.5"
-                            fill="#8b5cf6"
+                            fill="#94A3B8"
                             stroke="white"
                             strokeWidth="1.5"
                           />
@@ -319,12 +345,15 @@ export default function StatsScreen({
                             cx={hoverX}
                             cy={2 + (1 - (hoveredPoint.currentTemp - minVal) / Math.max(0.01, maxVal - minVal)) * (graphH - 4)}
                             r="4.5"
-                            fill="#06b6d4"
+                            fill="#F97316"
                             stroke="white"
                             strokeWidth="1.5"
                           />
                         ) : null}
                       </svg>
+                      {!isLoading && currentValues.length === 0 ? (
+                        <p className="absolute inset-0 grid place-items-center text-sm text-muted">No readings recorded for this period</p>
+                      ) : null}
                     </div>
                       <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">
                         <span>{formatStatsAxisLabel(firstTs, config.range)}</span>
@@ -335,14 +364,14 @@ export default function StatsScreen({
                   </div>
                 </div>
 
-                <div className="mt-1 flex flex-wrap items-center gap-4 text-xs">
+                <div className="mt-3 flex flex-wrap items-center gap-4 text-xs">
                   <div className="flex items-center gap-4 text-xs">
                     <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
-                      <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
+                      <span className="h-1 w-4 rounded-full bg-orange-500" />
                       Current
                     </span>
                     <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
-                      <span className="h-2.5 w-2.5 rounded-full bg-violet-500" />
+                      <span className="h-0 w-4 border-t-2 border-dashed border-slate-400" />
                       Target
                     </span>
                   </div>
@@ -358,8 +387,8 @@ export default function StatsScreen({
                     : ''}
                 </div>
 
-                {isLoading ? <p className="mt-1 text-xs text-muted">Loading samples…</p> : null}
-              </Card>
+                {isLoading ? <p className="mt-1 text-xs text-muted">Loading readings…</p> : null}
+              </SectionCard>
             );
           })}
         </section>
@@ -371,8 +400,6 @@ export default function StatsScreen({
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         toggleTheme={toggleTheme}
-        designMode={designMode}
-        toggleDesignMode={toggleDesignMode}
         debugLayoutEnabled={debugLayoutEnabled}
         toggleDebugLayout={toggleDebugLayout}
         theme={theme}
