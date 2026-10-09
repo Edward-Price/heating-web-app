@@ -7,6 +7,7 @@ import HomeScreen from './screens/HomeScreen';
 import StatsScreen from './screens/StatsScreen';
 import ScheduleScreen from './screens/ScheduleScreen';
 import { zoneState, formatTemperature, mapConnectionStatus } from './lib/deviceUtils';
+import { readApiResponse } from './lib/apiResponse';
 import {
   createStatsConfig,
   shiftAnchor,
@@ -102,6 +103,10 @@ export default function App() {
     setScheduleLoadingByZone({});
     setScheduleSavingByZone({});
     setScheduleNotice(EMPTY_SCHEDULE_NOTICE);
+    setStatsConfigByZone({});
+    setStatsSeriesByZone({});
+    setStatsLoadingByZone({});
+    setStatsHoverByZone({});
     setConnectionState('disconnected');
     setStatus(message);
   }, []);
@@ -119,13 +124,7 @@ export default function App() {
         'Content-Type': 'application/json'
       }
     });
-    const data = await res.json();
-    if (res.status === 401) {
-      clearClientSession();
-      throw new Error('Unauthorized');
-    }
-    if (!res.ok || !data.ok) throw new Error(data.error || `Request failed (${res.status})`);
-    return data;
+    return readApiResponse(res, clearClientSession);
   }, [clearClientSession, sessionToken]);
 
   const apiPost = useCallback(async (path, body, tokenOverride) => {
@@ -138,13 +137,7 @@ export default function App() {
       },
       body: JSON.stringify(body || {})
     });
-    const data = await res.json();
-    if (res.status === 401) {
-      clearClientSession();
-      throw new Error('Unauthorized');
-    }
-    if (!res.ok || !data.ok) throw new Error(data.error || `Request failed (${res.status})`);
-    return data;
+    return readApiResponse(res, clearClientSession);
   }, [clearClientSession, sessionToken]);
 
   const apiPut = useCallback(async (path, body, tokenOverride) => {
@@ -157,13 +150,7 @@ export default function App() {
       },
       body: JSON.stringify(body || {})
     });
-    const data = await res.json();
-    if (res.status === 401) {
-      clearClientSession();
-      throw new Error('Unauthorized');
-    }
-    if (!res.ok || !data.ok) throw new Error(data.error || `Request failed (${res.status})`);
-    return data;
+    return readApiResponse(res, clearClientSession);
   }, [clearClientSession, sessionToken]);
 
   const loadDashboard = useCallback(async (tokenOverride) => {
@@ -173,14 +160,9 @@ export default function App() {
     isLoadingRef.current = true;
     try {
       setConnectionState('loading');
-      setStatus((prev) => (prev && (prev.toLowerCase().includes('failed') || prev.toLowerCase().includes('error')) ? prev : ''));
+      setStatus('');
       const devicesResult = await apiGet('/devices', tokenOverride);
-      const stateResult = await apiGet('/state', tokenOverride);
       const fetchedDevices = Array.isArray(devicesResult.devices) ? devicesResult.devices : [];
-      const fetchedState =
-        stateResult && typeof stateResult.stateByDeviceId === 'object' && stateResult.stateByDeviceId
-          ? stateResult.stateByDeviceId
-          : {};
 
       setDevices((prev) => {
         if (fetchedDevices.length === 0 && prev.length > 0) {
@@ -189,6 +171,12 @@ export default function App() {
         return fetchedDevices;
       });
 
+      // Display the rooms as soon as they arrive, even if live state is delayed or fails.
+      const stateResult = await apiGet('/state', tokenOverride);
+      const fetchedState =
+        stateResult && typeof stateResult.stateByDeviceId === 'object' && stateResult.stateByDeviceId
+          ? stateResult.stateByDeviceId
+          : {};
       setStateByDeviceId((prev) => {
         const fetchedKeys = Object.keys(fetchedState);
         if (fetchedKeys.length === 0 && Object.keys(prev).length > 0) {
@@ -198,7 +186,10 @@ export default function App() {
       });
 
       setConnectionState('connected');
-      setStatus((prev) => (prev && !prev.toLowerCase().includes('failed') && !prev.toLowerCase().includes('error') ? '' : prev));
+      setStatus((prev) => {
+        if (prev.startsWith('Load failed:')) return '';
+        return prev && !prev.toLowerCase().includes('failed') && !prev.toLowerCase().includes('error') ? '' : prev;
+      });
     } catch (err) {
       if (err && err.message === 'Unauthorized') {
         return;
@@ -379,8 +370,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), password })
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || `Login failed (${res.status})`);
+      const data = await readApiResponse(res);
       setSessionToken(data.appSessionToken);
       localStorage.setItem(STORAGE_KEY, data.appSessionToken);
       setSystems(Array.isArray(data.systems) ? data.systems : []);
@@ -419,6 +409,10 @@ export default function App() {
       setHomeScheduleByZone({});
       homeScheduleRequestedRef.current.clear();
       setScheduleIdByZone({});
+      setStatsConfigByZone({});
+      setStatsSeriesByZone({});
+      setStatsLoadingByZone({});
+      setStatsHoverByZone({});
       setActiveTab('home');
       await loadDashboard();
     } catch (err) {
@@ -495,10 +489,14 @@ export default function App() {
           points,
           from: res.from || null,
           to: res.to || null,
+          collectionStatus: res.collectionStatus || null,
         },
       }));
     } catch (err) {
-      setStatus(`Stats load failed: ${String(err.message || err)}`);
+      setStatsSeriesByZone((prev) => ({
+        ...prev,
+        [key]: { range, anchor, points: [], error: String(err.message || err) },
+      }));
     } finally {
       setStatsLoadingByZone((prev) => ({ ...prev, [key]: false }));
     }
@@ -1336,6 +1334,7 @@ export default function App() {
         ringDashOffset={ringDashOffset}
         isErrorStatus={isErrorStatus}
         isDashboardLoading={isDashboardLoading}
+        onRetryLoad={() => void loadDashboard()}
         zones={zones}
         formatTemperature={formatTemperature}
         hotWater={hotWater}

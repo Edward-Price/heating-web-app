@@ -84,8 +84,11 @@ async function login(email, password, oi = 1550005) {
     })
     .filter(Boolean);
 
-  if (!token || !sessionId || systems.length === 0) {
-    throw new Error('Provider login failed: missing JT/SI/GD');
+  if (!token || !sessionId) {
+    throw new Error('Provider login failed: missing JT/SI');
+  }
+  if (systems.length === 0) {
+    throw new Error('Provider account has no heating systems available');
   }
 
   return {

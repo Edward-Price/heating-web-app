@@ -120,6 +120,15 @@ export default function StatsScreen({
             const config = statsConfigByZone[key] || createStatsConfig('day');
             const series = statsSeriesByZone[key] || { points: [] };
             const isLoading = Boolean(statsLoadingByZone[key]);
+            const collectionMessages = {
+              disabled: 'Temperature history recording is not configured. Ask the server administrator to enable it.',
+              error: 'Temperature history recording has failed. Ask the server administrator to check the collector logs.',
+              'other-system': 'Temperature history is being recorded for a different heating system.',
+              waiting: 'Waiting for the first temperature readings to be recorded.',
+            };
+            const emptyMessage = series.error
+              ? `Unable to load readings: ${series.error}`
+              : collectionMessages[series.collectionStatus] || 'No readings recorded for this period';
             const points = Array.isArray(series.points)
               ? series.points
                   .map((p) => ({
@@ -352,7 +361,7 @@ export default function StatsScreen({
                         ) : null}
                       </svg>
                       {!isLoading && currentValues.length === 0 ? (
-                        <p className="absolute inset-0 grid place-items-center text-sm text-muted">No readings recorded for this period</p>
+                        <p role={series.error ? 'alert' : 'status'} className="absolute inset-0 grid place-items-center px-4 text-center text-sm text-muted">{emptyMessage}</p>
                       ) : null}
                     </div>
                       <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-500 dark:text-slate-400">

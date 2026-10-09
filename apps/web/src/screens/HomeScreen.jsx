@@ -166,6 +166,7 @@ export default function HomeScreen({
   ringDashOffset,
   isErrorStatus,
   isDashboardLoading,
+  onRetryLoad,
   zones,
   formatTemperature,
   hotWater,
@@ -252,7 +253,12 @@ export default function HomeScreen({
           </header>
 
           {status ? (
-            <p className={`text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
+            <div className="grid justify-items-start gap-2">
+              <p role={isErrorStatus ? 'alert' : 'status'} className={`text-sm ${isErrorStatus ? 'text-rose-600' : 'text-muted'}`}>{status}</p>
+              {isErrorStatus ? (
+                <button type="button" onClick={onRetryLoad} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-600">Try again</button>
+              ) : null}
+            </div>
           ) : null}
 
           {isDashboardLoading ? (
@@ -267,7 +273,7 @@ export default function HomeScreen({
             </section>
           ) : (
             <>
-              {dialZone ? (
+              {dialZone && typeof dialState.targetTemp === 'number' ? (
                 <section className="py-2">
                   <TemperatureDial
                     zoneName={dialZone.name}

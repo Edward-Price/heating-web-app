@@ -59,7 +59,17 @@ const ENABLE_DEBUG_PROVIDER_ROUTES = process.env.ENABLE_DEBUG_PROVIDER_ROUTES ==
 const collectorState = {
   providerSession: null,
   seqState: { sequence: 0 },
+  lastCollectedAt: null,
+  failed: false,
 };
+
+function getStatsCollectionStatus(selectedGatewayId) {
+  if (!STATS_PROVIDER_EMAIL || !STATS_PROVIDER_PASSWORD) return 'disabled';
+  if (collectorState.failed) return 'error';
+  const gatewayId = collectorState.providerSession?.gatewayId;
+  if (gatewayId && gatewayId !== selectedGatewayId) return 'other-system';
+  return collectorState.lastCollectedAt ? 'collecting' : 'waiting';
+}
 
 function requireSession(req, res) {
   const token = extractTokenFromRequest(req);
@@ -238,6 +248,9 @@ async function runStatsCollectorTick() {
 
     const devicesResponse = await getDevices(collectorState.providerSession, collectorState.seqState);
     const stateResponse = await getState(collectorState.providerSession, collectorState.seqState);
+    if (extractProviderError(devicesResponse) || extractProviderError(stateResponse)) {
+      throw new Error('Provider rejected stats collection request');
+    }
     const devices = parseDevices(devicesResponse);
     const stateByDeviceId = parseState(stateResponse);
 
@@ -260,10 +273,12 @@ async function runStatsCollectorTick() {
       points,
     });
 
-    if (inserted > 0) {
-      console.log(`[api][stats] collector wrote ${inserted} points`);
-    }
+    if (!inserted) throw new Error('Provider returned no temperature readings for stats collection');
+    collectorState.lastCollectedAt = new Date().toISOString();
+    collectorState.failed = false;
+    console.log(`[api][stats] collector wrote ${inserted} points`);
   } catch (err) {
+    collectorState.failed = true;
     collectorState.providerSession = null;
     collectorState.seqState = { sequence: 0 };
     console.warn('[api][stats] collector tick failed', err && err.message ? err.message : err);
@@ -940,6 +955,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         ...series,
+        collectionStatus: getStatsCollectionStatus(auth.session.providerSession.gatewayId),
       });
       return;
     }
