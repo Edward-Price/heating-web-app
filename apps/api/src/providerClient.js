@@ -153,7 +153,17 @@ function sendProviderRequest(providerSession, state, options) {
   const previous = requestQueues.get(providerSession) || Promise.resolve();
   // Capture the selected system now so queued work cannot switch to another gateway.
   const requestSession = { ...providerSession };
-  const pending = previous.catch(() => {}).then(() => sendProviderRequestNow(requestSession, state, options));
+  const pending = previous.catch(() => {}).then(async () => {
+    if (options.keepaliveBeforeRead) {
+      // The official app sends a clock/keepalive tick during its refresh burst.
+      // Prepare the gateway before reads, including after a period of inactivity.
+      const ready = await sendProviderRequestNow(requestSession, state, {
+        SI: 103, HI: 2, payload: [Math.floor(Date.now() / 1000)],
+      });
+      if (ready && ready.E) return ready;
+    }
+    return sendProviderRequestNow(requestSession, state, options);
+  });
   requestQueues.set(providerSession, pending);
   return pending.finally(() => {
     if (requestQueues.get(providerSession) === pending) requestQueues.delete(providerSession);
@@ -233,6 +243,7 @@ async function sendProviderRequestNow(providerSession, state, { SI, HI, payload,
 
 async function getDevices(providerSession, state) {
   return sendProviderRequest(providerSession, state, {
+    keepaliveBeforeRead: true,
     SI: 11,
     HI: 49,
     payload: [],
@@ -241,6 +252,7 @@ async function getDevices(providerSession, state) {
 
 async function getState(providerSession, state) {
   return sendProviderRequest(providerSession, state, {
+    keepaliveBeforeRead: true,
     SI: 1,
     HI: 3,
     payload: [],
