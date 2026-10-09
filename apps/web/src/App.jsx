@@ -531,9 +531,9 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (activeTab !== 'home' || !selectedSystemId || !zones.length) return;
+    if (activeTab !== 'home' || !selectedSystemId || !zones.length || connectionState !== 'connected') return;
     loadHomeSchedules();
-  }, [activeTab, selectedSystemId, zones]);
+  }, [activeTab, selectedSystemId, zones, connectionState]);
 
   useEffect(() => {
     if (activeTab !== 'schedule' || scheduleZoneId !== null || !scheduleDevices.length) return;

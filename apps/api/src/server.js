@@ -39,6 +39,7 @@ const {
   getUserList,
 } = require('./providerClient');
 const { sendJson, readJson } = require('./http');
+const { connectionErrorMessage, providerReadErrorMessage } = require('./providerErrors');
 const { appendSnapshot, queryZoneSeries } = require('./statsStore');
 const {
   createSession,
@@ -738,9 +739,10 @@ const server = http.createServer(async (req, res) => {
       const providerResponse = await getDevices(auth.session.providerSession, auth.session.seqState);
       const providerError = extractProviderError(providerResponse);
       if (providerError) {
+        console.warn('[api][devices] provider rejected read', providerError);
         sendJson(res, 502, {
           ok: false,
-          error: `Provider rejected devices request (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          error: providerReadErrorMessage('devices', providerError),
           providerResponse,
         });
         return;
@@ -757,9 +759,10 @@ const server = http.createServer(async (req, res) => {
       const providerResponse = await getState(auth.session.providerSession, auth.session.seqState);
       const providerError = extractProviderError(providerResponse);
       if (providerError) {
+        console.warn('[api][state] provider rejected read', providerError);
         sendJson(res, 502, {
           ok: false,
-          error: `Provider rejected state request (EC:${providerError.code ?? 'n/a'}, ES:${providerError.serviceId ?? 'n/a'})`,
+          error: providerReadErrorMessage('state', providerError),
           providerResponse,
         });
         return;
@@ -962,9 +965,10 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 404, { ok: false, error: 'Not found' });
   } catch (err) {
+    console.warn('[api] request failed', req.method, (req.url || '/').split('?')[0], err?.message || String(err));
     sendJson(res, 500, {
       ok: false,
-      error: err && err.message ? err.message : 'Unexpected server error',
+      error: connectionErrorMessage(err),
     });
   }
 });

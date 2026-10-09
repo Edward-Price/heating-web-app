@@ -145,7 +145,22 @@ function buildPacket({ providerSession, SI, HI, payload, useStringGmi, omitPaylo
   return [header, payload];
 }
 
-async function sendProviderRequest(providerSession, state, { SI, HI, payload, timeoutMs = 12000 }) {
+const requestQueues = new WeakMap();
+
+function sendProviderRequest(providerSession, state, options) {
+  // Each operation opens its own socket. Keep requests on a provider session from
+  // overlapping, including dashboard, schedule and user-triggered requests.
+  const previous = requestQueues.get(providerSession) || Promise.resolve();
+  // Capture the selected system now so queued work cannot switch to another gateway.
+  const requestSession = { ...providerSession };
+  const pending = previous.catch(() => {}).then(() => sendProviderRequestNow(requestSession, state, options));
+  requestQueues.set(providerSession, pending);
+  return pending.finally(() => {
+    if (requestQueues.get(providerSession) === pending) requestQueues.delete(providerSession);
+  });
+}
+
+async function sendProviderRequestNow(providerSession, state, { SI, HI, payload, timeoutMs = 12000 }) {
   if (!providerSession.gatewayId) {
     throw new Error('No heating system selected');
   }
