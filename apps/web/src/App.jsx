@@ -48,6 +48,16 @@ export default function App() {
   const [systemsLoading, setSystemsLoading] = useState(false);
   const [devices, setDevices] = useState([]);
   const [stateByDeviceId, setStateByDeviceId] = useState({});
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const [boosts, setBoosts] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('heating-water-boosts') || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('heating-water-boosts', JSON.stringify(boosts)); } catch { /* Keep tracking in memory if storage is unavailable. */ }
+  }, [boosts]);
   const [selectedZoneId, setSelectedZoneId] = useState(null);
   const [targetDraft, setTargetDraft] = useState(20);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -95,6 +105,7 @@ export default function App() {
     setMenuOpen(false);
     setDevices([]);
     setStateByDeviceId({});
+    setLastRefreshedAt(null);
     setScheduleByZone({});
     setSavedScheduleByZone({});
     setHomeScheduleByZone({});
@@ -185,6 +196,7 @@ export default function App() {
         return fetchedState;
       });
 
+      if (Object.keys(fetchedState).length > 0) setLastRefreshedAt(Date.now());
       setConnectionState('connected');
       setStatus((prev) => {
         if (prev.startsWith('Load failed:')) return '';
@@ -401,6 +413,7 @@ export default function App() {
       setSelectedSystemId(String(gatewayId));
       setDevices([]);
       setStateByDeviceId({});
+      setLastRefreshedAt(null);
       setSelectedZoneId(null);
       setScheduleZoneId(null);
       setScheduleDayIndex(null);
@@ -427,6 +440,7 @@ export default function App() {
     setSelectedZoneId(null);
     setDevices([]);
     setStateByDeviceId({});
+    setLastRefreshedAt(null);
     setHomeScheduleByZone({});
     homeScheduleRequestedRef.current.clear();
     setConnectionState('disconnected');
@@ -449,7 +463,15 @@ export default function App() {
     try {
       const label = minutes === 0 ? 'Turning hot water off...' : `Starting hot water boost (${minutes} min)...`;
       setStatus(label);
+      const startedAt = Date.now();
       await apiPost(`/hot-water/${deviceId}/boost`, { minutes });
+      const key = `${selectedSystemId}:${deviceId}`;
+      setBoosts((prev) => {
+        const next = { ...prev };
+        if (minutes === 0) delete next[key];
+        else next[key] = { startedAt, endsAt: startedAt + minutes * 60000 };
+        return next;
+      });
       await loadDashboard();
     } catch (err) {
       setStatus(`Hot water write failed: ${String(err.message || err)}`);
@@ -1339,6 +1361,8 @@ export default function App() {
         formatTemperature={formatTemperature}
         hotWater={hotWater}
         writeHotWater={writeHotWater}
+        lastRefreshedAt={lastRefreshedAt}
+        hotWaterBoost={hotWater ? boosts[`${selectedSystemId}:${hotWater.id}`] : null}
         onOpenZoneSchedule={openZoneScheduleFromHome}
       />
       {renderLayoutDebugOverlay()}

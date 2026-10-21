@@ -1,6 +1,8 @@
-import { useEffect } from 'react';
-import { BedDouble, CalendarClock, CalendarDays, ChevronDown, ChevronRight, Droplet, Flame, Minus, Plus, Sofa, Thermometer } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BedDouble, CalendarClock, CalendarDays, ChevronRight, Droplet, Flame, Minus, Plus, Sofa, Thermometer } from 'lucide-react';
 import AppMenuDrawer from '../components/layout/AppMenuDrawer';
+import ScreenHeader from '../components/layout/ScreenHeader';
+import { boostProgress, formatRefreshAge } from '../lib/refreshStatus';
 import { IconBadge, SectionCard } from '../components/ui/surface';
 import { formatHour, formatScheduleChangeDay, getNextScheduleChange } from '../lib/scheduleUtils';
 
@@ -21,7 +23,7 @@ function pickZoneIcon(zone) {
   return Thermometer;
 }
 
-function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, heatingOn, dialPointerIdRef, formatTemperature }) {
+function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, heatingOn, dialPointerIdRef, formatTemperature, isLoading = false }) {
   const center = DIAL_SIZE / 2;
   const radius = DIAL_SIZE * 0.4;
   const trackStroke = 14;
@@ -65,7 +67,7 @@ function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, h
 
   return (
     <div className="relative mx-auto flex w-full max-w-sm items-center justify-center">
-      <button type="button" className={`${stepButtonClass} absolute left-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(-0.5)} aria-label="Decrease target temperature">
+      <button type="button" disabled={isLoading} className={`${stepButtonClass} disabled:opacity-40 absolute left-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(-0.5)} aria-label="Decrease target temperature">
         <Minus className="h-6 w-6" strokeWidth={2.5} />
       </button>
 
@@ -75,6 +77,7 @@ function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, h
           className="absolute inset-0 h-full w-full"
           style={{ touchAction: 'none' }}
           onPointerDown={(event) => {
+            if (isLoading) return;
             const element = event.currentTarget;
             const { distanceFromCenter } = resolvePoint(event, element);
             if (Math.abs(distanceFromCenter - radius) > trackStroke + ringTouchTolerance) return;
@@ -83,7 +86,7 @@ function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, h
             element.setPointerCapture?.(event.pointerId);
           }}
           onPointerMove={(event) => {
-            if (dialPointerIdRef.current !== event.pointerId) return;
+            if (isLoading || dialPointerIdRef.current !== event.pointerId) return;
             updateDialFromPointer(event, event.currentTarget);
           }}
           onPointerUp={(event) => {
@@ -109,24 +112,28 @@ function TemperatureDial({ zoneName, targetDraft, setTargetDraft, currentTemp, h
           </defs>
           <circle cx={center} cy={center} r={radius + 26} fill="url(#homeDialGlow)" className="dark:opacity-10" />
           <path d={basePath} fill="none" className="stroke-slate-200 dark:stroke-slate-700" strokeWidth={trackStroke} strokeLinecap="round" />
-          <path d={activePath} fill="none" stroke="url(#homeDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
-          <circle cx={knob.x} cy={knob.y} r={13} fill="#ffffff" stroke="#F97316" strokeWidth="5" />
+          {!isLoading ? (
+            <>
+              <path d={activePath} fill="none" stroke="url(#homeDialGradient)" strokeWidth={trackStroke} strokeLinecap="round" />
+              <circle cx={knob.x} cy={knob.y} r={13} fill="#ffffff" stroke="#F97316" strokeWidth="5" />
+            </>
+          ) : null}
         </svg>
 
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="grid place-items-center text-center">
             <span className="text-sm font-medium text-muted">{zoneName}</span>
-            <span className="mt-1 text-6xl font-bold tracking-tight text-foreground">{targetDraft.toFixed(1)}°</span>
+            <span className="mt-1 text-6xl font-bold tracking-tight text-foreground">{isLoading ? '--.-' : targetDraft.toFixed(1)}°</span>
             <span className={`mt-2 flex items-center gap-1.5 text-base font-semibold ${heatingOn ? 'text-orange-500' : 'text-muted'}`}>
-              {heatingOn ? <Flame className="h-4 w-4" fill="currentColor" /> : null}
-              {heatingOn ? 'Heating On' : 'Idle'}
+              {!isLoading && heatingOn ? <Flame className="h-4 w-4" fill="currentColor" /> : null}
+              {isLoading ? 'Loading…' : heatingOn ? 'Heating On' : 'Idle'}
             </span>
             <span className="mt-0.5 text-sm text-muted">Currently {formatTemperature(currentTemp)}</span>
           </div>
         </div>
       </div>
 
-      <button type="button" className={`${stepButtonClass} absolute right-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(0.5)} aria-label="Increase target temperature">
+      <button type="button" disabled={isLoading} className={`${stepButtonClass} disabled:opacity-40 absolute right-0 top-1/2 z-10 -translate-y-1/2`} onClick={() => stepTarget(0.5)} aria-label="Increase target temperature">
         <Plus className="h-6 w-6" strokeWidth={2.5} />
       </button>
     </div>
@@ -171,8 +178,23 @@ export default function HomeScreen({
   formatTemperature,
   hotWater,
   writeHotWater,
+  lastRefreshedAt,
+  hotWaterBoost,
   onOpenZoneSchedule,
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    const timer = window.setInterval(update, 15000);
+    window.addEventListener('focus', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+  const waterProgress = boostProgress(hotWaterBoost, Math.max(now, hotWaterBoost?.startedAt || 0));
   const dialZone = selectedZone || zones[0] || null;
   const dialState = dialZone ? zoneState(stateByDeviceId, dialZone.id) : {};
   const dialTarget = typeof dialState.targetTemp === 'number' ? dialState.targetTemp : null;
@@ -231,26 +253,21 @@ export default function HomeScreen({
           className="mx-auto grid max-w-xl gap-3"
           style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 140ms ease' : 'none' }}
         >
-          <header className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <button
-                type="button"
-                className="flex max-w-full items-center gap-1 text-left text-3xl font-bold tracking-tight text-foreground"
-                onClick={() => setMenuOpen(true)}
-                aria-label="Open menu"
-              >
-                <span className="truncate">{systemName}</span>
-                <ChevronDown className="h-6 w-6 shrink-0" />
-              </button>
-              <p className="mt-0.5 text-sm text-muted">
-                {isDashboardLoading ? 'Loading…' : `${zoneCountLabel} · ${anyHeating ? 'Heating active' : 'Idle'}`}
-              </p>
-            </div>
-            <div className="mt-2 flex shrink-0 items-center gap-1.5 rounded-full bg-white/80 px-3 py-1.5 text-xs font-medium text-muted shadow-sm dark:bg-slate-800">
-              <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
-              <span>{connection.label}</span>
-            </div>
-          </header>
+          <ScreenHeader
+            title={systemName}
+            subtitle={isDashboardLoading ? 'Loading…' : `${zoneCountLabel} · ${anyHeating ? 'Heating active' : 'Idle'}`}
+            onOpenMenu={() => setMenuOpen(true)}
+            right={
+              <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/80 px-3 py-1.5 text-xs font-medium text-muted shadow-sm dark:bg-slate-800">
+                <span className={`h-2 w-2 rounded-full ${connection.dotClass}`} />
+                <span>{connection.label}</span>
+              </div>
+            }
+          />
+
+          <p className="-mt-1 text-xs text-muted" title={lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleString() : undefined}>
+            {formatRefreshAge(lastRefreshedAt, now)}
+          </p>
 
           {status ? (
             <div className="grid justify-items-start gap-2">
@@ -261,9 +278,41 @@ export default function HomeScreen({
             </div>
           ) : null}
 
+          <section className="py-2">
+            <TemperatureDial
+              zoneName={dialZone?.name || 'Temperature'}
+              targetDraft={targetDraft}
+              setTargetDraft={setTargetDraft}
+              currentTemp={dialState.currentTemp}
+              heatingOn={Boolean(dialState.heatingOn)}
+              dialPointerIdRef={dialPointerIdRef}
+              formatTemperature={formatTemperature}
+              isLoading={dialTarget === null}
+            />
+            {dialZone && (hasChange || isSetting) ? (
+            <div className="mt-2 flex justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTargetDraft(dialTarget)}
+                disabled={isSetting}
+                className="h-11 rounded-full px-5 text-sm font-semibold text-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => writeTarget(dialZone.id, targetDraft)}
+                disabled={!hasChange || isSetting}
+                className="h-11 rounded-full bg-gradient-to-r from-orange-400 to-orange-600 px-6 text-sm font-bold text-white shadow-md shadow-orange-500/25 disabled:opacity-60"
+              >
+                {isSetting ? 'Setting…' : `Set to ${targetDraft.toFixed(1)}°`}
+              </button>
+            </div>
+            ) : null}
+          </section>
+
           {isDashboardLoading ? (
             <section className="grid gap-3">
-              <div className="mx-auto my-4 aspect-square w-[min(280px,68vw)] animate-pulse rounded-full border-[14px] border-slate-200 dark:border-slate-700" />
               <div className="grid grid-cols-3 gap-3">
                 {[1, 2, 3].map((idx) => (
                   <div key={`zone-loading-${idx}`} className="h-28 animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
@@ -273,40 +322,6 @@ export default function HomeScreen({
             </section>
           ) : (
             <>
-              {dialZone && typeof dialState.targetTemp === 'number' ? (
-                <section className="py-2">
-                  <TemperatureDial
-                    zoneName={dialZone.name}
-                    targetDraft={targetDraft}
-                    setTargetDraft={setTargetDraft}
-                    currentTemp={dialState.currentTemp}
-                    heatingOn={Boolean(dialState.heatingOn)}
-                    dialPointerIdRef={dialPointerIdRef}
-                    formatTemperature={formatTemperature}
-                  />
-                  {hasChange || isSetting ? (
-                  <div className="mt-2 flex justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setTargetDraft(dialTarget)}
-                      disabled={isSetting}
-                      className="h-11 rounded-full px-5 text-sm font-semibold text-muted disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => writeTarget(dialZone.id, targetDraft)}
-                      disabled={!hasChange || isSetting}
-                      className="h-11 rounded-full bg-gradient-to-r from-orange-400 to-orange-600 px-6 text-sm font-bold text-white shadow-md shadow-orange-500/25 disabled:opacity-60"
-                    >
-                      {isSetting ? 'Setting…' : `Set to ${targetDraft.toFixed(1)}°`}
-                    </button>
-                  </div>
-                  ) : null}
-                </section>
-              ) : null}
-
               <section className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
                 {zones.map((zone) => {
                   const state = zoneState(stateByDeviceId, zone.id);
@@ -379,6 +394,14 @@ export default function HomeScreen({
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base font-semibold text-foreground">Hot Water Boost</h3>
                       <p className="text-sm text-muted">{hotWaterOn ? 'Hot water is on' : 'Quickly heat your hot water'}</p>
+                      {hotWaterOn && waterProgress && waterProgress.remainingMinutes > 0 ? (
+                        <p className="mt-1 text-sm font-medium text-orange-600 dark:text-orange-400">
+                          About {waterProgress.remainingMinutes} min left · {waterProgress.elapsedMinutes} min elapsed
+                          <span className="mt-0.5 block text-xs font-normal text-muted">Based on the boost started in this browser</span>
+                        </p>
+                      ) : hotWaterOn ? (
+                        <p className="mt-1 text-xs text-muted">Boost time remaining unavailable</p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex gap-2 [&>button]:flex-1">
