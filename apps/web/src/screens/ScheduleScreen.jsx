@@ -233,21 +233,17 @@ export default function ScheduleScreen({
                       >
                         <span className="h-10 w-1.5 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700" style={{ backgroundColor: getScheduleValueColor(period.temp, scheduleIsBinary) || undefined }} />
                         <div className="min-w-0">
-                          {isFirst ? (
-                            <div className="flex h-9 items-center px-1 text-base font-semibold text-foreground">00:00</div>
-                          ) : (
-                            <input
-                              type="time"
-                              step={600}
-                              value={formatHour(period.start)}
-                              onChange={(event) => {
-                                const next = parseTimeInput(event.target.value);
-                                if (next !== null) setSchedulePeriodStart(scheduleZoneId, dayIndex, originalIndex, next);
-                              }}
-                              className="h-9 rounded-lg bg-slate-100 px-2 text-base font-semibold text-foreground outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:[color-scheme:dark]"
-                              aria-label={`Start time for setting ${sortedIndex + 1}`}
-                            />
-                          )}
+                          <input
+                            type="time"
+                            step={600}
+                            value={formatHour(period.start)}
+                            onChange={(event) => {
+                              const next = parseTimeInput(event.target.value);
+                              if (next !== null) setSchedulePeriodStart(scheduleZoneId, dayIndex, originalIndex, next);
+                            }}
+                            className="h-9 rounded-lg bg-slate-100 px-2 text-base font-semibold text-foreground outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:[color-scheme:dark]"
+                            aria-label={`Start time for setting ${sortedIndex + 1}`}
+                          />
                           <div className="px-1 text-xs text-muted">until {formatHour(period.end)}</div>
                         </div>
 

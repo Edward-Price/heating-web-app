@@ -183,7 +183,8 @@ export default function StatsScreen({
               minVal,
               maxVal,
               domainStartTs,
-              domainEndTs
+              domainEndTs,
+              config.range === 'day'
             );
             const currentCoords = buildSeriesCoordinates(
               points,

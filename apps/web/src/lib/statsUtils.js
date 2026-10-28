@@ -68,7 +68,7 @@ export function getStatsDomainBounds(config, fallbackPoints = []) {
   return { startTs: now - DAY_MS, endTs: now };
 }
 
-export function buildSeriesPath(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs) {
+export function buildSeriesPath(points, width, height, getValue, minY, maxY, domainStartTs, domainEndTs, stepped = false) {
   if (!points.length || !Number.isFinite(minY) || !Number.isFinite(maxY) || minY === maxY) {
     return '';
   }
@@ -90,7 +90,7 @@ export function buildSeriesPath(points, width, height, getValue, minY, maxY, dom
     if (!Number.isFinite(value)) continue;
     const x = leftPad + ((pointTs - firstTs) / spanTs) * innerW;
     const y = topPad + (1 - (value - minY) / (maxY - minY)) * innerH;
-    path += path ? ` L ${x} ${y}` : `M ${x} ${y}`;
+    path += path ? (stepped ? ` H ${x} V ${y}` : ` L ${x} ${y}`) : `M ${x} ${y}`;
   }
   return path;
 }
